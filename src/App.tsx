@@ -35,13 +35,16 @@ import OrderConfirmationDetails from "./pages/sales-purchase/OrderConfirmationDe
 import DeliveryChallanPreview from "./pages/sales-purchase/DeliveryChallanPreview";
 import Invoice from "./pages/sales-purchase/Invoice";
 import InvoicePreview from "./pages/sales-purchase/InvoicePreview";
-// import Inventory from "./pages/Inventory";
 import Address from "./pages/Address";
-// import Inventory from "./pages/Inventory";
 import Inventory from "./pages/inventory/index";
 import SingleItem from "./pages/inventory/SingleItem";
 import CreateSalesQuotation from "./pages/sales-purchase/CreateSalesQuotation";
 import PurchaseInvoice from "./pages/sales-purchase/PurchaseInvoice";
+import InwardDocumentPreview from "./pages/inventory/InwardDocumentPreview";
+import BOMDetails from "./components/app/modals/BOMDetails";
+import BillOfMaterialTable from "./components/app/tables/production/BillOfMaterialTable";
+import CreateBom from "./components/app/CreateBOM";
+import CreateProductionOrder from "./components/app/tables/production/create-production-order";
 
 const App: React.FC = () => {
   return (
@@ -50,7 +53,9 @@ const App: React.FC = () => {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/organization" element={<OrganizationPage />} />
+        
         <Route element={<ProtectedRoute />}>
+          {/* Main Layout Routes (with sidebar) */}
           <Route path="/" element={<MainLayout />}>
             <Route index element={<Dashboard />} />
             <Route path="buyers-suppliers" element={<BuyerAndSupplier />} />
@@ -103,8 +108,22 @@ const App: React.FC = () => {
               path="inventory/store-approval"
               element={<StoreApproval />}
             />
+            <Route 
+              path="inventory/inward-document-preview/:id" 
+              element={<InwardDocumentPreview />} 
+            />
             <Route path="production" element={<Production />} />
+            <Route path="production/bom/:id" element={<BOMDetails />} />
+            
+            {/* ADD THESE INSIDE MainLayout TO SHOW WITH SIDEBAR */}
+            <Route path="production/bom" element={<BillOfMaterialTable />} />
+            <Route path="production/bom/create" element={<CreateBom />} />
+            
+            {/* ADD THIS TO MainLayout ROUTE GROUP */}
+            <Route path="production/create-order" element={<CreateProductionOrder />} />
           </Route>
+          
+          {/* Orders Layout Routes (different layout) */}
           <Route path="/" element={<OrdersLayout />}>
             <Route
               path="sales-purchase/purchase-order"

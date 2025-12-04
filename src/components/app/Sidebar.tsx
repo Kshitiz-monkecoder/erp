@@ -181,28 +181,29 @@ const Sidebar: React.FC<SidebarProps> = ({
                       </div>
                     </div>
                     {showNestedLinks && activeNestedMenu === menu.name && (
-                      <div className="flex flex-col text-sm gap-1 mt-1">
-                        {menu.nestedLinks?.map((nestedLink: any) => {
-                          return (
-                            <Link
-                              to={nestedLink.link}
-                              className={clsx(
-                                "px-4 text-white/70 hover:text-white py-2 pl-10 hover:bg-white/8 duration-200 ease-out transition-all rounded-md p-2",
-                                {
-                                  "bg-white/8":
-                                    tab ===
-                                    new URLSearchParams(
-                                      nestedLink.link.split("?")[1],
-                                    ).get("tab"),
-                                },
-                              )}
-                            >
-                              {nestedLink.name}
-                            </Link>
-                          );
-                        })}
-                      </div>
-                    )}
+  <div className="flex flex-col text-sm gap-1 mt-1">
+    {menu.nestedLinks?.map((nestedLink: any) => {
+      return (
+        <Link
+          key={nestedLink.link || nestedLink.name} // ADD THIS KEY PROP
+          to={nestedLink.link}
+          className={clsx(
+            "px-4 text-white/70 hover:text-white py-2 pl-10 hover:bg-white/8 duration-200 ease-out transition-all rounded-md p-2",
+            {
+              "bg-white/8":
+                tab ===
+                new URLSearchParams(
+                  nestedLink.link.split("?")[1],
+                ).get("tab"),
+            },
+          )}
+        >
+          {nestedLink.name}
+        </Link>
+      );
+    })}
+  </div>
+)}
                   </div>
                 ) : (
                   <Link

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -11,10 +11,9 @@ import {
   getSortedRowModel,
   getPaginationRowModel,
   RowData,
-  // SortingState,
   useReactTable,
 } from "@tanstack/react-table";
-import { Funnel, PlusIcon } from "lucide-react";
+import { Funnel, PlusIcon, ArrowRight } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -27,11 +26,10 @@ import { Button } from "@/components/ui/button";
 import FilterProductionTableModal from "../../modals/FilterProductionTableModal";
 import { Input } from "@/components/ui/input";
 import TablePagenation from "../../TablePagenation";
-// import { useNavigate } from "react-router";
-// import { Link } from "react-router";
+import { useNavigate } from "react-router";
+import { get } from "@/lib/apiService";
 
 declare module "@tanstack/react-table" {
-  //allows us to define custom properties for our columns
   interface ColumnMeta<TData extends RowData, TValue> {
     filterVariant?: "text" | "range" | "select";
   }
@@ -46,30 +44,75 @@ export type AllProductionTableDataType = {
   bomNumber: string;
   fgItemId: string;
   fgName: string;
-  date: string;
   typeOfProcess: string;
   fgUom: string;
   targetQuantity: number;
   completedQuantity: number;
+  orderDeliveryDate: string;
   creationDate: string;
   lastModifiedBy: string;
   lastModifiedDate: string;
 };
 
+// API Response Interfaces
+interface ApiStore {
+  name: string;
+  address1: string;
+  address2: string;
+  city: string;
+  postalCode: string;
+  id: number;
+}
+
+interface ApiUser {
+  id: number;
+  email: string;
+  name: string;
+  phone: string;
+  userType: string;
+}
+
+interface ApiProductionItem {
+  id: number;
+  docNumber: string;
+  orderDeliveryDate: string | null;
+  expectedCompletionDate: string | null;
+  status: string;
+  attachments: string | null;
+  createdAt: string;
+  updatedAt: string;
+  rmStore: ApiStore;
+  fgStore: ApiStore;
+  scrapStore: ApiStore;
+  createdBy: ApiUser;
+}
+
+interface ApiResponse {
+  status: boolean;
+  message: string;
+  data: ApiProductionItem[];
+}
+
+// API Function
+const productionAPI = {
+  getProductionList: async (page = 1, limit = 20, status = "planned"): Promise<ApiResponse> => {
+    return await get(`/production/proccess?page=${page}&limit=${limit}&status=${status}`);
+  },
+};
+
 const columns: ColumnDef<AllProductionTableDataType>[] = [
   {
-    header: () => <div className="min-w-32">Reference Number</div>,
-    accessorKey: "refrenceNumber",
-    cell: ({ row }) => (
-      <div className="min-w-32">{row.getValue("refrenceNumber")}</div>
-    ),
-  },
-  {
-    header: () => <div className="min-w-32">Process Number</div>,
+    header: () => <div className="min-w-44">Process Number</div>,
     accessorKey: "processNumber",
-    cell: ({ row }) => (
-      <div className="min-w-32">{row.getValue("processNumber")}</div>
-    ),
+    cell: ({ row }) => {
+      const docNumber = row.original.refrenceNumber || "";
+      return (
+        <div className="min-w-44 flex items-center gap-2">
+          <span className="text-blue-600 font-medium">{docNumber}</span>
+          <ArrowRight className="w-4 h-4 text-blue-600 transform -rotate-45" />
+        </div>
+      );
+    },
   },
   {
     header: () => <div className="min-w-32">Stage</div>,
@@ -79,21 +122,26 @@ const columns: ColumnDef<AllProductionTableDataType>[] = [
   {
     header: () => <div className="min-w-32">Status</div>,
     accessorKey: "status",
-    cell: ({ row }) => (
-      <div className="flex items-center justify-center min-w-32">
-        <div
-          className={`font-normal px-3 py-1 text-xs w-fit rounded-full ${
-            row.getValue("status") === "Approved"
-              ? "text-green-600 bg-green-100"
-              : row.getValue("status") === "Rejected"
-                ? "text-red-600 bg-red-100"
-                : "text-yellow-600 bg-yellow-100"
-          }`}
-        >
-          {row.getValue("status")}
+    cell: ({ row }) => {
+      const statusValue = row.getValue("status") as string;
+      return (
+        <div className="flex items-center justify-center min-w-32">
+          <div
+            className={`font-normal px-3 py-1 text-xs w-fit rounded-full ${
+              statusValue === "approved" || statusValue === "Approved"
+                ? "text-green-600 bg-green-100"
+                : statusValue === "rejected" || statusValue === "Rejected"
+                  ? "text-red-600 bg-red-100"
+                  : statusValue === "completed" || statusValue === "Completed"
+                  ? "text-blue-600 bg-blue-100"
+                  : "text-yellow-600 bg-yellow-100"
+            }`}
+          >
+            {statusValue.charAt(0).toUpperCase() + statusValue.slice(1)}
+          </div>
         </div>
-      </div>
-    ),
+      );
+    },
   },
   {
     header: () => <div className="min-w-32">Bom Number</div>,
@@ -115,11 +163,6 @@ const columns: ColumnDef<AllProductionTableDataType>[] = [
     cell: ({ row }) => <div className="min-w-32">{row.getValue("fgName")}</div>,
   },
   {
-    header: () => <div className="min-w-32">Date</div>,
-    accessorKey: "date",
-    cell: ({ row }) => <div className="min-w-32">{row.getValue("date")}</div>,
-  },
-  {
     header: () => <div className="min-w-32">Type of Process</div>,
     accessorKey: "typeOfProcess",
     cell: ({ row }) => (
@@ -129,7 +172,10 @@ const columns: ColumnDef<AllProductionTableDataType>[] = [
   {
     header: () => <div className="min-w-32">FG UOM</div>,
     accessorKey: "fgUom",
-    cell: ({ row }) => <div className="min-w-32">{row.getValue("fgUom")}</div>,
+    cell: ({ row }) => {
+      const uomValue = row.getValue("fgUom") as string;
+      return <div className="min-w-32">{uomValue || "KG"}</div>;
+    },
   },
   {
     header: () => <div className="min-w-32">Target Quantity</div>,
@@ -144,6 +190,14 @@ const columns: ColumnDef<AllProductionTableDataType>[] = [
     cell: ({ row }) => (
       <div className="min-w-44">{row.getValue("completedQuantity")}</div>
     ),
+  },
+  {
+    header: () => <div className="min-w-44">Order Delivery Date</div>,
+    accessorKey: "orderDeliveryDate",
+    cell: ({ row }) => {
+      const deliveryDate = row.getValue("orderDeliveryDate") as string;
+      return <div className="min-w-44">{deliveryDate || "-"}</div>;
+    },
   },
   {
     header: () => <div className="min-w-32">Creation Date</div>,
@@ -168,70 +222,59 @@ const columns: ColumnDef<AllProductionTableDataType>[] = [
   },
 ];
 
-const items: AllProductionTableDataType[] = [
-  {
-    refrenceNumber: "IJUBR208",
-    processNumber: "QWZYF9",
-    stage: "Completed",
-    status: "Pending",
-    bomNumber: "4NYOZ",
-    fgItemId: "7P3HYKD",
-    fgName: "ItemD",
-    date: "2023-09-10",
-    typeOfProcess: "Assembly", // Added field
-    fgUom: "pcs", // Added field
-    targetQuantity: 100, // Added field
-    completedQuantity: 90, // Added field
-    creationDate: "2023-09-01", // Added field
-    lastModifiedBy: "user1", // Added field
-    lastModifiedDate: "2023-09-10", // Added field
-  },
-  {
-    refrenceNumber: "KX85ANX5",
-    processNumber: "AYAXX7",
-    stage: "Initiation",
-    status: "Pending",
-    bomNumber: "JEP29",
-    fgItemId: "T5JBZ16",
-    fgName: "ItemA",
-    date: "2025-01-06",
-    typeOfProcess: "Packaging", // Added field
-    fgUom: "box", // Added field
-    targetQuantity: 200, // Added field
-    completedQuantity: 50, // Added field
-    creationDate: "2025-01-01", // Added field
-    lastModifiedBy: "user2", // Added field
-    lastModifiedDate: "2025-01-06", // Added field
-  },
-  {
-    refrenceNumber: "MP9DQNF5",
-    processNumber: "7WRVJO",
-    stage: "Review",
-    status: "Rejected",
-    bomNumber: "AIWBT",
-    fgItemId: "XOLQ3YU",
-    fgName: "ItemD",
-    date: "2025-10-04",
-    typeOfProcess: "Inspection", // Added field
-    fgUom: "pcs", // Added field
-    targetQuantity: 150, // Added field
-    completedQuantity: 0, // Added field
-    creationDate: "2025-10-01", // Added field
-    lastModifiedBy: "user3", // Added field
-    lastModifiedDate: "2025-10-04", // Added field
-  },
-];
-
 const AllProductionTable: React.FC = () => {
+  const [data, setData] = useState<AllProductionTableDataType[]>([]);
+  const [loading, setLoading] = useState(true);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [showFilterProductionTableModal, setShowFilterProductionTableModal] =
     useState<boolean>(false);
-
+  const navigate = useNavigate();
+  
   const toggleFilterProductionTableModal = () =>
     setShowFilterProductionTableModal((prev) => !prev);
 
+  // Fetch data from API
+  useEffect(() => {
+    const loadProduction = async () => {
+      try {
+        setLoading(true);
+        const res = await productionAPI.getProductionList();
+
+        if (res?.status && Array.isArray(res.data)) {
+          const mapped = res.data.map((item: ApiProductionItem) => ({
+            refrenceNumber: item.docNumber,
+            processNumber: item.id.toString(),
+            stage: item.status || "-",
+            status: item.status || "-",
+            bomNumber: "-", // API does not send BOM
+            fgItemId: item.fgStore?.id?.toString() ?? "-",
+            fgName: item.fgStore?.name ?? "-",
+            typeOfProcess: "-", // API missing
+            fgUom: "KG", // Default to KG as requested
+            targetQuantity: 0, // API missing
+            completedQuantity: 0, // API missing
+            orderDeliveryDate: item.orderDeliveryDate 
+              ? new Date(item.orderDeliveryDate).toLocaleDateString() 
+              : "-",
+            creationDate: item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "-",
+            lastModifiedBy: item.createdBy?.name ?? "-",
+            lastModifiedDate: item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : "-",
+          }));
+
+          setData(mapped);
+        }
+      } catch (err) {
+        console.log("Error loading production list:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProduction();
+  }, []);
+
   const table = useReactTable({
-    data: items,
+    data,
     columns,
     initialState: {
       pagination: {
@@ -272,9 +315,12 @@ const AllProductionTable: React.FC = () => {
             <div className="flex flex-col sm:flex-row gap-3 md:items-center">
               <div className="flex items-center gap-4">
                 <div>
-                  <Button className="bg-[#7047EB] font-light text-sm hover:bg-[#7047EB] shadow-none text-white rounded-md px-4 py-2">
+                  <Button 
+                    className="bg-[#7047EB] font-light text-sm hover:bg-[#7047EB] shadow-none text-white rounded-md px-4 py-2"
+                    onClick={() => navigate("/production/create-order")}
+                  >
                     <PlusIcon className="" />
-                    Add Item
+                    Create New
                   </Button>
                 </div>
               </div>
@@ -306,13 +352,14 @@ const AllProductionTable: React.FC = () => {
                   {headerGroup.headers.map((header) => {
                     const shouldShowSearch = [
                       "refrenceNumber",
-                      "processNumber",
+                      "stage",
                       "bomNumber",
                       "fgItemId",
                       "fgName",
                       "fgUom",
                       "targetQuantity",
                       "completedQuantity",
+                      "orderDeliveryDate",
                       "lastModifiedBy",
                     ].includes(header.id);
                     return (
@@ -339,12 +386,25 @@ const AllProductionTable: React.FC = () => {
               ))}
             </TableHeader>
             <TableBody>
-              {table.getRowModel().rows?.length ? (
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={columns.length} className="text-center py-20">
+                    <div className="flex flex-col items-center justify-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-2"></div>
+                      <p className="text-gray-600">Loading production data...</p>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : table.getRowModel().rows?.length ? (
                 table.getRowModel().rows.map((row) => (
                   <TableRow
                     key={row.id}
                     data-state={row.getIsSelected() && "selected"}
-                    // TODO : add sidebar hovering effect for current page
+                    className="hover:bg-gray-50 cursor-pointer"
+                    onClick={() => {
+                      const processId = row.getValue("processNumber") as string;
+                      navigate(`/production/process/${processId}`);
+                    }}
                   >
                     {row.getVisibleCells().map((cell) => (
                       <TableCell key={cell.id} className="border">
@@ -364,17 +424,19 @@ const AllProductionTable: React.FC = () => {
                   >
                     <div className="w-full flex flex-col gap-3 justify-center items-center">
                       <img src="/folder.svg" alt="" />
-                      <h4 className="font-bold text-lg">No Item Added</h4>
+                      <h4 className="font-bold text-lg">No Production Orders</h4>
                       <p className="max-w-xs text-[#121217] text-sm">
-                        Please add a document to get started and manage your
-                        operations efficiently.
+                        No production orders found. Create a new production order to get started.
                       </p>
-                      {/* <div className="flex items-center gap-4">
-                        <Button className="bg-[#7047EB] h-8 text-sm hover:bg-[#7047EB] shadow-none text-white rounded-md px-4 py-2">
+                      <div className="flex items-center gap-4">
+                        <Button 
+                          className="bg-[#7047EB] h-8 text-sm hover:bg-[#7047EB] shadow-none text-white rounded-md px-4 py-2"
+                          onClick={() => navigate("/production/create-order")}
+                        >
                           <PlusIcon className="" />
-                          Add Item
+                          Create Production Order
                         </Button>
-                      </div> */}
+                      </div>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -382,7 +444,7 @@ const AllProductionTable: React.FC = () => {
             </TableBody>
           </Table>
         </div>
-        {table.getRowModel().rows.length > 0 && (
+        {!loading && table.getRowModel().rows.length > 0 && (
           <TablePagenation table={table} />
         )}
       </div>

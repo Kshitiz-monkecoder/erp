@@ -48,10 +48,10 @@ export const InventorySubLinks: INavlinks[] = [
     name: "Item Master",
     link: "/inventory?tab=item-master",
   },
-  // {
-  //   name: "Inventory Approvals",
-  //   link: "/inventory?tab=approvals",
-  // },
+  {
+    name: "Inventory Approvals",
+    link: "/inventory?tab=approvals",
+  },
   {
     name: "Stock Movement",
     link: "/inventory?tab=stock-movement",
@@ -102,5 +102,9 @@ export const ProductionSubLinks: INavlinks[] = [
   {
     name: "Bill of Materials",
     link: "/production?tab=bill-of-materials",
+  },
+    {
+    name: "Create BOM",
+    link: "/production/bom/create",
   },
 ];

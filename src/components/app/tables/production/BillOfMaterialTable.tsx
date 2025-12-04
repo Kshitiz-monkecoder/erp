@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -8,14 +8,12 @@ import {
   getFacetedRowModel,
   getFacetedUniqueValues,
   getFilteredRowModel,
-  getSortedRowModel,
   getPaginationRowModel,
+  getSortedRowModel,
   RowData,
-  // SortingState,
   useReactTable,
 } from "@tanstack/react-table";
-import { Funnel, Plus, Trash } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { PlusIcon, Eye, Funnel } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -25,364 +23,316 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import FilterBillsofMaterialModal from "../../modals/FilterBillsofMaterialTableModal";
+import SelectFilter, { OptionType } from "../../../app/SelectFilter";
+import MultiSelectWithSearch from "../../MultiSelectWithSearch";
 import TablePagenation from "../../TablePagenation";
-import { Checkbox } from "@/components/ui/checkbox";
-import TableComparisonFilterSearch, {
-  FilterValue,
-} from "./TableComparisonFilterSearch";
-// import { useNavigate } from "react-router";
-// import { Link } from "react-router";
+import { get } from "@/lib/apiService";
+import { useNavigate } from "react-router-dom";
 
 declare module "@tanstack/react-table" {
-  //allows us to define custom properties for our columns
   interface ColumnMeta<TData extends RowData, TValue> {
     filterVariant?: "text" | "range" | "select";
   }
 }
 
-// TODO: change the types here according to values
-export type BillsOfMaterialData = {
-  bomId: string;
-  bomName: string;
+/**
+ * Table row type used by the UI (normalized)
+ */
+type BOMRow = {
+  id: number;
+  docNumber: string;
+  docName: string;
   status: string;
   fgName: string;
   numberOfRm: number;
-  lastModifiedDate: string;
-  lastModifiedBy: string;
+  updatedAt: string; // ISO
+  updatedAtLabel: string; // human readable
+  createdBy: string;
 };
-
-const columns: ColumnDef<BillsOfMaterialData>[] = [
-  {
-    id: "select",
-    header: ({ table }) => (
-      <Checkbox
-        checked={
-          table.getIsAllPageRowsSelected() ||
-          (table.getIsSomePageRowsSelected() && "indeterminate")
-        }
-        onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-        aria-label="Select all"
-        className="mr-2 "
-      />
-    ),
-    cell: ({ row }) => (
-      <Checkbox
-        checked={row.getIsSelected()}
-        onCheckedChange={(value) => row.toggleSelected(!!value)}
-        aria-label="Select row"
-        className="mr-2 "
-      />
-    ),
-  },
-  {
-    header: () => <div className="min-w-32">BOM ID</div>,
-    accessorKey: "bomId",
-    cell: ({ row }) => (
-      <div className="min-w-32 text-sm">{row.getValue("bomId")}</div>
-    ),
-  },
-  {
-    header: () => <div className="min-w-32">BOM Name</div>,
-    accessorKey: "bomName",
-    cell: ({ row }) => (
-      <div className="min-w-32 text-sm">{row.getValue("bomName")}</div>
-    ),
-  },
-  {
-    header: () => <div className="min-w-32">Status</div>,
-    accessorKey: "status",
-    cell: ({ row }) => (
-      <div
-        className={`font-normal px-3 py-1 text-xs w-fit rounded-full ${
-          row.getValue("status") === "Active"
-            ? "text-green-600 bg-green-100"
-            : row.getValue("status") === "Inactive"
-              ? "text-red-600 bg-red-100"
-              : "text-yellow-600 bg-yellow-100"
-        }`}
-      >
-        {row.getValue("status")}
-      </div>
-    ),
-  },
-  {
-    header: () => <div className="min-w-32">FG Name</div>,
-    accessorKey: "fgName",
-    cell: ({ row }) => (
-      <div className="min-w-32 text-sm">{row.getValue("fgName")}</div>
-    ),
-  },
-  {
-    header: () => <div className="min-w-48">No. of RM</div>,
-    accessorKey: "numberOfRm",
-    cell: ({ row }) => (
-      <div className="min-w-32 text-sm">{row.getValue("numberOfRm")}</div>
-    ),
-    filterFn: (row, columnId, filterValue: FilterValue) => {
-      if (!filterValue?.value) return true; // No filter, show all
-      const rowValue = Number(row.getValue(columnId));
-      const filterNum = Number(filterValue.value);
-      switch (filterValue.operator) {
-        case ">":
-          return rowValue > filterNum;
-        case "<":
-          return rowValue < filterNum;
-        case ">=":
-          return rowValue >= filterNum;
-        case "<=":
-          return rowValue <= filterNum;
-        default:
-          return true;
-      }
-    },
-  },
-  {
-    header: () => <div className="min-w-32">Last Modified By</div>,
-    accessorKey: "lastModifiedBy",
-    cell: ({ row }) => (
-      <div className="min-w-32 text-sm">{row.getValue("lastModifiedBy")}</div>
-    ),
-  },
-  {
-    header: () => <div className="min-w-32">Last Modified Date</div>,
-    accessorKey: "lastModifiedDate",
-    cell: ({ row }) => (
-      <div className="min-w-32 text-sm">{row.getValue("lastModifiedDate")}</div>
-    ),
-  },
-];
-
-const items: BillsOfMaterialData[] = [
-  {
-    bomId: "BOM001",
-    bomName: "Assembly Alpha",
-    status: "Active",
-    fgName: "Widget X",
-    numberOfRm: 5,
-    lastModifiedDate: "2025-04-15",
-    lastModifiedBy: "Ani",
-  },
-  {
-    bomId: "BOM002",
-    bomName: "Assembly Beta",
-    status: "Inactive",
-    fgName: "Gadget Y",
-    numberOfRm: 3,
-    lastModifiedDate: "2025-04-10",
-    lastModifiedBy: "Ani",
-  },
-  {
-    bomId: "BOM003",
-    bomName: "Assembly Gamma",
-    status: "Pending",
-    fgName: "Component Z",
-    numberOfRm: 7,
-    lastModifiedDate: "2025-03-28",
-    lastModifiedBy: "Ani",
-  },
-  {
-    bomId: "BOM004",
-    bomName: "Assembly Delta",
-    status: "Active",
-    fgName: "Part A",
-    numberOfRm: 4,
-    lastModifiedDate: "2025-04-01",
-    lastModifiedBy: "Ani",
-  },
-  {
-    bomId: "BOM005",
-    bomName: "Assembly Epsilon",
-    status: "Active",
-    fgName: "Module B",
-    numberOfRm: 6,
-    lastModifiedDate: "2025-04-12",
-    lastModifiedBy: "Ani",
-  },
-];
 
 const BillOfMaterialTable: React.FC = () => {
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
-  const [showFilterBillsOfMaterialModal, setShowBillsOfMaterialModal] =
-    useState<boolean>(false);
-  const toggleShowFilterBillsOfMaterialModal = () =>
-    setShowBillsOfMaterialModal((prev) => !prev);
+  const [rows, setRows] = useState<BOMRow[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [rawResponse, setRawResponse] = useState<any[]>([]); // keep for future use if needed
+  const [showFilterModal, setShowFilterModal] = useState(false);
+
+  const navigate = useNavigate();
+
+  // Fetch BOMs from API
+  const fetchBOMs = async (page = 1, limit = 20, status = "published", search = "BOM") => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Use your api helper - axios interceptors will attach token
+      const resp = await get(`/production/bom?page=${page}&limit=${limit}&status=${status}&search=${encodeURIComponent(search)}`);
+
+      // API returns { status: true/false, message, data: [...] }
+      const data = resp?.data ?? resp;
+      if (!data) {
+        setError("Invalid response from server");
+        setRows([]);
+        setRawResponse([]);
+        return;
+      }
+
+      // The API might come as { status: true, data: [...] } or directly as array
+      const list = Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [];
+
+      setRawResponse(list);
+
+      // Transform to BOMRow
+      const transformed: BOMRow[] = list.map((b: any) => {
+        const bomItems = Array.isArray(b.bomItems) ? b.bomItems : [];
+        const firstItem = bomItems[0];
+        const fgName = firstItem?.finishedGoods?.item?.name || "—";
+        const numberOfRm = firstItem?.rawMaterials?.length ?? 0;
+
+        const updatedAtIso = b.updatedAt || b.docDate || new Date().toISOString();
+        const updatedAtLabel = new Date(updatedAtIso).toLocaleString();
+
+        return {
+          id: b.id,
+          docNumber: b.docNumber || `BOM${b.id}`,
+          docName: b.docName || "—",
+          status: b.status || "—",
+          fgName,
+          numberOfRm,
+          updatedAt: updatedAtIso,
+          updatedAtLabel,
+          createdBy: b.createdBy?.name || "—",
+        } as BOMRow;
+      });
+
+      setRows(transformed);
+    } catch (err: any) {
+      console.error("Error fetching BOMs:", err);
+      if (err?.response?.data?.message) setError(err.response.data.message);
+      else setError("Failed to fetch BOMs");
+      setRows([]);
+      setRawResponse([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBOMs();
+  }, []);
+
+  // Columns
+  const columns: ColumnDef<BOMRow>[] = [
+    {
+      header: "BOM ID",
+      accessorKey: "docNumber",
+      cell: ({ row }) => (
+        <div
+          className="min-w-32 text-sm text-blue-600 cursor-pointer hover:underline"
+          onClick={() => navigate(`/production/bom/${row.original.id}`)}
+        >
+          {row.original.docNumber}
+        </div>
+      ),
+    },
+    {
+      header: "BOM Name",
+      accessorKey: "docName",
+      cell: ({ row }) => <div className="min-w-32 text-sm">{row.original.docName}</div>,
+    },
+    {
+      header: "Status",
+      accessorKey: "status",
+      cell: ({ row }) => (
+        <div className="min-w-24">
+          <span
+            className={`px-2 py-1 rounded-full text-xs ${
+              row.original.status === "published" ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
+            }`}
+          >
+            {row.original.status}
+          </span>
+        </div>
+      ),
+    },
+    {
+      header: "FG Name",
+      accessorKey: "fgName",
+      cell: ({ row }) => <div className="min-w-32 text-sm">{row.original.fgName}</div>,
+    },
+    {
+      header: "No. of RM",
+      accessorKey: "numberOfRm",
+      cell: ({ row }) => <div className="min-w-20 text-sm">{row.original.numberOfRm}</div>,
+    },
+    {
+      header: "Last Modified By",
+      accessorKey: "createdBy",
+      cell: ({ row }) => <div className="min-w-32 text-sm">{row.original.createdBy}</div>,
+    },
+    {
+      header: "Last Modified Date",
+      accessorKey: "updatedAtLabel",
+      cell: ({ row }) => <div className="min-w-40 text-sm">{row.original.updatedAtLabel}</div>,
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }) => (
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate(`/production/bom/${row.original.id}`)}
+          >
+            <Eye className="h-4 w-4 mr-2" />
+            View Details
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   const table = useReactTable({
-    data: items,
+    data: rows,
     columns,
     initialState: {
-      pagination: {
-        pageIndex: 0,
-        pageSize: 10,
+      pagination: { pageIndex: 0, pageSize: 10 },
+      columnVisibility: {
+        docNumber: true,
+        docName: true,
+        status: true,
+        fgName: true,
+        numberOfRm: true,
+        createdBy: true,
+        updatedAtLabel: true,
+        actions: true,
       },
     },
-    state: {
-      columnFilters,
-    },
+    state: { columnFilters },
     onColumnFiltersChange: setColumnFilters,
     getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(), //client-side filtering
+    getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    getFacetedRowModel: getFacetedRowModel(), // client-side faceting
-    getFacetedUniqueValues: getFacetedUniqueValues(), // generate unique values for select filter/autocomplete
-    getFacetedMinMaxValues: getFacetedMinMaxValues(), // generate min/max values for range filter
+    getFacetedRowModel: getFacetedRowModel(),
+    getFacetedUniqueValues: getFacetedUniqueValues(),
+    getFacetedMinMaxValues: getFacetedMinMaxValues(),
     enableSortingRemoval: false,
   });
+
+  // Status filter options
+  const statusOptions: OptionType[] = [
+    { label: "All", value: "all" },
+    { label: "Published", value: "published" },
+    { label: "Draft", value: "draft" },
+  ];
+
+  const handleStatusFilter = (value: string) => {
+    if (value === "all") table.getColumn("status")?.setFilterValue(undefined);
+    else table.getColumn("status")?.setFilterValue(value);
+  };
 
   return (
     <div>
       <div className="space-y-6">
-        <section className="mt-4 px-5">
-          <div className="flex md:flex-row gap-2 justify-between">
-            <div className="w-full flex justify-start max-w-[13rem]">
-              <div className="max-w-44">
-                <Button
-                  onClick={toggleShowFilterBillsOfMaterialModal}
-                  className="text-neutral-500 px-5 bg-neutral-200/70 hover:bg-neutral-200/70 hover:opacity-80 shadow-none w-full"
-                >
-                  Filter
-                  <Funnel className="h-4 w-4 " />
-                </Button>
+        <section className="px-5">
+          <div className="flex justify-between items-center mb-4">
+            {/* Left: filters */}
+            <div className="flex flex-wrap gap-4 items-center">
+              <SelectFilter label="Status" items={statusOptions} onValueChange={handleStatusFilter} />
+              <MultiSelectWithSearch columns={table.getAllColumns()} label="Show/Hide Columns" />
+            </div>
+
+            {/* Right: Create BOM button */}
+            <div className="flex items-center">
+              <Button
+                onClick={() => navigate("/production/bom/create")}
+                className="bg-[#7047EB] hover:bg-[#5f39cc] text-white"
+              >
+                <PlusIcon className="h-4 w-4 mr-2" />
+                CREATE BOM
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        {loading ? (
+          <div className="px-5 h-96 flex items-center justify-center">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#7047EB] mx-auto"></div>
+              <p className="mt-4 text-gray-600">Loading BOMs...</p>
+            </div>
+          </div>
+        ) : error ? (
+          <div className="px-5 h-96 flex items-center justify-center">
+            <div className="text-center">
+              <p className="text-red-600 mb-4">{error}</p>
+              <Button onClick={() => fetchBOMs()}>Retry</Button>
+            </div>
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="px-5">
+            <div className="border rounded-lg h-96 flex flex-col items-center justify-center">
+              <img src="/folder.svg" alt="No data" className="w-24 h-24 mb-4" />
+              <h4 className="font-bold text-lg mb-2">No BOMs Found</h4>
+              <p className="max-w-xs text-gray-600 text-sm text-center mb-6">
+                Create a BOM to see it listed here.
+              </p>
+              <Button onClick={() => navigate("/production/bom/create")}>Create BOM</Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="px-5">
+              <div className="border rounded-lg bg-white overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    {table.getHeaderGroups().map((hg) => (
+                      <TableRow key={hg.id} className="bg-muted/50">
+                        {hg.headers.map((header) => (
+                          <TableHead key={header.id} className="h-10 border-r last:border-r-0">
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableHeader>
+
+                  <TableBody>
+                    {table.getRowModel().rows?.length ? (
+                      table.getRowModel().rows.map((row) => (
+                        <TableRow key={row.id} className="hover:bg-gray-50 transition-colors">
+                          {row.getVisibleCells().map((cell) => (
+                            <TableCell key={cell.id} className="border-b">
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={columns.length} className="h-96 text-center">
+                          <div className="w-full flex flex-col gap-3 justify-center items-center">
+                            <img src="/folder.svg" alt="" />
+                            <h4 className="font-bold text-lg">No BOM Found</h4>
+                            <p className="max-w-xs text-gray-600 text-sm">
+                              No BOMs match your current filters.
+                            </p>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </div>
             </div>
-          </div>
-        </section>
-        <section className=" px-5 w-full">
-          <div className="sm:flex-row flex flex-col gap-3 pt-3 md:justify-between sm:items-center border-t">
-            <p className="text-xs sm:text-sm">
-              Select BOMs to Start Process or Delete
-            </p>
-            <div className="flex sm:items-center gap-3">
-              <Button
-                disabled={!table.getIsSomePageRowsSelected()}
-                className="flex items-center bg-neutral-300 bg-neutral-200/70 hover:bg-neutral-200/70 hover:opacity-80 shadow-none  text-sm text-neutral-500"
-              >
-                <Plus className="w-4" />
-                Start Process
-              </Button>
-              <Button
-                disabled={!table.getIsSomePageRowsSelected()}
-                className="flex items-center bg-neutral-300 bg-neutral-200/70 hover:bg-neutral-200/70 hover:opacity-80 shadow-none  text-sm text-neutral-500"
-              >
-                <Trash className="w-4" />
-                Delete
-              </Button>
-            </div>
-          </div>
-        </section>
-        <div className="px-5">
-          <Table>
-            <TableHeader>
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id} className="bg-muted/50 border">
-                  {headerGroup.headers.map((header) => {
-                    return (
-                      <TableHead
-                        key={header.id}
-                        className="relative h-10 border-t select-none border-r"
-                      >
-                        {flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
-                      </TableHead>
-                    );
-                  })}
-                </TableRow>
-              ))}
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id} className="bg-muted/50 border">
-                  {headerGroup.headers.map((header) => {
-                    const shouldShowSearch = [
-                      "bomId",
-                      "bomName",
-                      "fgName",
-                      "lastModifiedBy",
-                    ].includes(header.id);
-                    const showComparisonSearch = ["numberOfRm"].includes(
-                      header.id,
-                    );
-                    return (
-                      <TableHead
-                        key={header.id}
-                        className="relative border-t select-none border-r"
-                      >
-                        {shouldShowSearch && (
-                          <Input
-                            placeholder={`Search...`}
-                            value={
-                              (header.column.getFilterValue() as string) ?? ""
-                            }
-                            onChange={(event) =>
-                              header.column.setFilterValue(event.target.value)
-                            }
-                            className="h-8 w-full border-b border-t-0 border-l-0 border-r-0 my-2 focus-visible:ring-0 rounded-none shadow-none"
-                          />
-                        )}
-                        {showComparisonSearch && (
-                          <TableComparisonFilterSearch header={header} />
-                        )}
-                      </TableHead>
-                    );
-                  })}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows?.length ? (
-                table.getRowModel().rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    data-state={row.getIsSelected() && "selected"}
-                    // TODO : add sidebar hovering effect for current page
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id} className="border">
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext(),
-                        )}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell
-                    colSpan={columns.length}
-                    className="h-96 text-center"
-                  >
-                    <div className="w-full flex flex-col gap-3 justify-center items-center">
-                      <img src="/folder.svg" alt="" />
-                      <h4 className="font-bold text-lg">No Item Added</h4>
-                      <p className="max-w-xs text-[#121217] text-sm">
-                        Please add a document to get started and manage your
-                        operations efficiently.
-                      </p>
-                      {/* <div className="flex items-center gap-4">
-                        <Button className="bg-[#7047EB] h-8 text-sm hover:bg-[#7047EB] shadow-none text-white rounded-md px-4 py-2">
-                          <PlusIcon className="" />
-                          Add Item
-                        </Button>
-                      </div> */}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-        {table.getRowModel().rows.length > 0 && (
-          <TablePagenation table={table} />
+
+            {table.getRowModel().rows.length > 0 && <TablePagenation table={table} />}
+          </>
         )}
       </div>
-      <FilterBillsofMaterialModal
-        table={table}
-        isOpen={showFilterBillsOfMaterialModal}
-        onClose={toggleShowFilterBillsOfMaterialModal}
-      />
     </div>
   );
 };

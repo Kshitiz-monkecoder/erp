@@ -1,17 +1,13 @@
-import React, { useMemo, useState } from "react";
+// src/components/tables/ItemApprovalTable.tsx
+import React, { useMemo, useState, useEffect } from "react";
 import {
   ColumnDef,
   ColumnFiltersState,
   flexRender,
   getCoreRowModel,
-  getFacetedMinMaxValues,
-  getFacetedRowModel,
-  getFacetedUniqueValues,
   getFilteredRowModel,
   getSortedRowModel,
   getPaginationRowModel,
-  RowData,
-  // SortingState,
   useReactTable,
 } from "@tanstack/react-table";
 import { ArrowUpRight } from "lucide-react";
@@ -26,368 +22,196 @@ import {
 import SelectFilter, { OptionType } from "../SelectFilter";
 import MultiSelectWithSearch from "../MultiSelectWithSearch";
 import TablePagenation from "../TablePagenation";
-// import { useNavigate } from "react-router";
-// import { Link } from "react-router";
+import { useNavigate } from "react-router-dom";
+import { get } from "@/lib/apiService";
 
-declare module "@tanstack/react-table" {
-  //allows us to define custom properties for our columns
-  interface ColumnMeta<TData extends RowData, TValue> {
-    filterVariant?: "text" | "range" | "select";
-  }
-}
-
-// TODO: change the types here according to values
 type Item = {
   id: string;
-  approvalId: string;
+  approvalId: string; // documentNumber
   documentType: string;
-  documentNumber: string;
+  documentNumber: string; // PO number
   documentAction: string;
   approvalStatus: string;
-  createdBy: string;
+  createdBy: string; // supplier name
   date: string;
+  inwardDocumentId?: string; // optional doc number fallback
 };
 
-const columns: ColumnDef<Item>[] = [
-  // {
-  //   id: "select",
-  //   header: ({ table }) => (
-  //     <Checkbox
-  //       checked={
-  //         table.getIsAllPageRowsSelected() ||
-  //         (table.getIsSomePageRowsSelected() && "indeterminate")
-  //       }
-  //       onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-  //       aria-label="Select all"
-  //       className="mr-2 "
-  //     />
-  //   ),
-  //   cell: ({ row }) => (
-  //     <Checkbox
-  //       checked={row.getIsSelected()}
-  //       onCheckedChange={(value) => row.toggleSelected(!!value)}
-  //       aria-label="Select row"
-  //       className="mr-2 "
-  //     />
-  //   ),
-  // },
-  {
-    header: "Approval Id",
-    accessorKey: "approvalId",
-    cell: ({ row }) => (
-      <div className="font-normal min-w-32 flex items-center gap-4">
-        {row.getValue("approvalId")}
-        <ArrowUpRight className="text-[#8A8AA3] w-5" />
-      </div>
-    ),
-  },
-  {
-    header: "Document Type",
-    accessorKey: "documentType",
-    cell: ({ row }) => (
-      <div className="font-normal min-w-32">{row.getValue("documentType")}</div>
-    ),
-  },
-  {
-    header: "Document Number",
-    accessorKey: "documentNumber",
-    cell: ({ row }) => (
-      <div className="font-normal min-w-32 flex text-[#7047EB] items-center gap-4">
-        {row.getValue("documentNumber")}
-      </div>
-    ),
-  },
-  {
-    header: "Document Action",
-    accessorKey: "documentAction",
-    cell: ({ row }) => (
-      <div className="font-normal min-w-32">
-        {row.getValue("documentAction")}
-      </div>
-    ),
-  },
-  {
-    header: "Approval Status",
-    accessorKey: "approvalStatus",
-    cell: ({ row }) => (
-      // Change this according to slug values
-      <div className="font-normal px-3 py-1 text-green-600 text-xs bg-green-100 w-fit rounded-full">
-        {row.getValue("approvalStatus")}
-      </div>
-    ),
-  },
-  {
-    header: "Created By",
-    accessorKey: "createdBy",
-    cell: ({ row }) => (
-      <div className="font-normal min-w-32">{row.getValue("createdBy")}</div>
-    ),
-  },
-  {
-    header: "Date",
-    accessorKey: "date",
-    cell: ({ row }) => (
-      <div className="font-normal min-w-32">{row.getValue("date")}</div>
-    ),
-  },
-];
-
-const items: Item[] = [
-  {
-    id: "1",
-    approvalId: "IAP00001",
-    documentType: "Manual Adjustment",
-    documentNumber: "MAJ00003",
-    documentAction: "Document Created",
-    approvalStatus: "Approved",
-    createdBy: "Rohit",
-    date: "2025-02-12",
-  },
-  {
-    id: "2",
-    approvalId: "IAP00001",
-    documentType: "Manual Adjustment",
-    documentNumber: "MAJ00003",
-    documentAction: "Document Created",
-    approvalStatus: "Approved",
-    createdBy: "Rohit",
-    date: "2025-02-12",
-  },
-  {
-    id: "3",
-    approvalId: "IAP00001",
-    documentType: "Manual Adjustment",
-    documentNumber: "MAJ00003",
-    documentAction: "Document Created",
-    approvalStatus: "Approved",
-    createdBy: "Rohit",
-    date: "2025-02-12",
-  },
-  {
-    id: "4",
-    approvalId: "IAP00001",
-    documentType: "Manual Adjustment",
-    documentNumber: "MAJ00003",
-    documentAction: "Document Created",
-    approvalStatus: "Approved",
-    createdBy: "Rohit",
-    date: "2025-02-12",
-  },
-  {
-    id: "5",
-    approvalId: "IAP00001",
-    documentType: "Manual Adjustment",
-    documentNumber: "MAJ00003",
-    documentAction: "Document Created",
-    approvalStatus: "Approved",
-    createdBy: "Rohit",
-    date: "2025-02-12",
-  },
-  {
-    id: "6",
-    approvalId: "IAP00001",
-    documentType: "Manual Adjustment",
-    documentNumber: "MAJ00003",
-    documentAction: "Document Created",
-    approvalStatus: "Approved",
-    createdBy: "Rohit",
-    date: "2025-02-12",
-  },
-  {
-    id: "7",
-    approvalId: "IAP00001",
-    documentType: "Manual Adjustment",
-    documentNumber: "MAJ00003",
-    documentAction: "Document Created",
-    approvalStatus: "Approved",
-    createdBy: "Rohit",
-    date: "2025-02-12",
-  },
-  {
-    id: "8",
-    approvalId: "IAP00001",
-    documentType: "Manual Adjustment",
-    documentNumber: "MAJ00003",
-    documentAction: "Document Created",
-    approvalStatus: "Approved",
-    createdBy: "Rohit",
-    date: "2025-02-12",
-  },
-  {
-    id: "9",
-    approvalId: "IAP00001",
-    documentType: "Manual Adjustment",
-    documentNumber: "MAJ00003",
-    documentAction: "Document Created",
-    approvalStatus: "Approved",
-    createdBy: "Rohit",
-    date: "2025-02-12",
-  },
-];
-
-// interface IItemApprovalTable {
-//   tab: string | null;
-//   toggleAddInventoryModal: () => void;
-// }
-
 const ItemApprovalTable: React.FC = () => {
-  // const navigateTo = useNavigate();
-  const searchParams = new URLSearchParams(location.search);
+  const navigate = useNavigate();
+  const searchParams = new URLSearchParams(window.location.search);
   const startDate = searchParams.get("startDate");
   const endDate = searchParams.get("endDate");
+
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [items, setItems] = useState<Item[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // performance optimization
+  useEffect(() => {
+    const fetchGRNData = async () => {
+      try {
+        setLoading(true);
+        // GET /inventory/grn -> returns { status, message, data: [...] }
+        const response = await get("/inventory/grn");
+        const apiData = response?.data || [];
+
+        const formatted = apiData.map((item: any) => ({
+          id: String(item.id),
+          approvalId: item.documentNumber ?? `GRN-${item.id}`,
+          documentType: "GRN Document",
+          documentNumber: item.purchaseOrder?.documentNumber ?? "-",
+          documentAction: item.remarks ?? "N/A",
+          approvalStatus: item.grnStatus ?? "N/A",
+          createdBy: item.supplier?.name ?? "-",
+          date: item.documentDate ?? item.createdAt ?? "",
+          inwardDocumentId: item.purchaseInword?.documentNumber ?? item.documentNumber,
+        }));
+
+        setItems(formatted);
+      } catch (error) {
+        console.error("Error fetching GRN data:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchGRNData();
+  }, []);
+
   const filteredItems = useMemo(() => {
-    // Start with category filtering
-    let filtered;
+    if (!startDate || !endDate) return items;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    end.setDate(end.getDate() + 1);
 
-    // Then apply date filtering if both dates are present
-    if (startDate && endDate) {
-      filtered = items.filter((item) => {
-        const itemDate = new Date(item.date);
-        const start = new Date(startDate);
-        const end = new Date(endDate);
+    return items.filter((item) => {
+      if (!item.date) return false;
+      const itemDate = new Date(item.date);
+      return itemDate >= start && itemDate < end;
+    });
+  }, [startDate, endDate, items]);
 
-        // Add one day to end date to include the end date in results
-        end.setDate(end.getDate() + 1);
-
-        // Check if item date is between start and end dates
-        return itemDate >= start && itemDate < end;
-      });
-    }
-
-    return filtered;
-  }, [startDate, endDate]);
+  const columns: ColumnDef<Item>[] = [
+    {
+      header: "Approval Id",
+      accessorKey: "approvalId",
+      cell: ({ row }) => (
+        <div
+          onClick={() => {
+            // navigate by numeric GRN id so preview fetches the correct document
+            navigate(`/inventory/inward-document-preview/${row.original.id}`);
+          }}
+          className="font-normal min-w-32 flex items-center gap-2 cursor-pointer text-blue-600 hover:underline"
+        >
+          {row.getValue("approvalId")}
+          <ArrowUpRight className="w-4 h-4 text-gray-500" />
+        </div>
+      ),
+    },
+    { header: "Document Type", accessorKey: "documentType", cell: ({ row }) => <div>{row.getValue("documentType")}</div> },
+    {
+      header: "Document Number",
+      accessorKey: "documentNumber",
+      cell: ({ row }) => <div className="text-[#7047EB]">{row.getValue("documentNumber")}</div>,
+    },
+    { header: "Document Action", accessorKey: "documentAction" },
+    {
+      header: "Approval Status",
+      accessorKey: "approvalStatus",
+      cell: ({ row }) => (
+        <span
+          className={`px-3 py-1 text-xs rounded-full ${
+            row.getValue("approvalStatus") === "Approved"
+              ? "bg-green-100 text-green-700"
+              : row.getValue("approvalStatus") === "Pending"
+              ? "bg-yellow-100 text-yellow-700"
+              : row.getValue("approvalStatus") === "COMPLETED"
+              ? "bg-green-100 text-green-700"
+              : "bg-red-100 text-red-700"
+          }`}
+        >
+          {row.getValue("approvalStatus")}
+        </span>
+      ),
+    },
+    { header: "Created By", accessorKey: "createdBy" },
+    { header: "Date", accessorKey: "date" },
+  ];
 
   const table = useReactTable({
-    data: filteredItems ?? items,
+    data: filteredItems,
     columns,
-    initialState: {
-      pagination: {
-        pageIndex: 0,
-        pageSize: 10,
-      },
-      columnVisibility: {
-        approvalId: false,
-        documentType: true,
-        documentNumber: true,
-        documentAction: true,
-        approvalStatus: true,
-        createdBy: true,
-        date: true,
-      },
-    },
-    state: {
-      columnFilters,
-    },
+    state: { columnFilters },
     onColumnFiltersChange: setColumnFilters,
     getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(), //client-side filtering
+    getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    getFacetedRowModel: getFacetedRowModel(), // client-side faceting
-    getFacetedUniqueValues: getFacetedUniqueValues(), // generate unique values for select filter/autocomplete
-    getFacetedMinMaxValues: getFacetedMinMaxValues(), // generate min/max values for range filter
-    enableSortingRemoval: false,
+    initialState: { pagination: { pageSize: 10 } },
   });
 
   const approvalStatus: OptionType[] = [
-    { label: "All", value: "All" },
+    { label: "All", value: "all" },
     { label: "Pending", value: "Pending" },
     { label: "Approved", value: "Approved" },
     { label: "Rejected", value: "Rejected" },
+    { label: "Completed", value: "COMPLETED" },
   ];
+
   return (
-    <div>
-      <div className="space-y-6">
-        <section className="px-5">
-          <div className="flex justify-between">
-            <div className="flex flex-wrap gap-4 items-center">
-              {/* Create onValueChange to pass through these for filtering logic */}
-              <SelectFilter
-                label="Approval Status"
-                items={approvalStatus}
-                onValueChange={(value) => {
-                  table.getColumn("approvalStatus")?.setFilterValue(value);
-                }}
-              />
-              <MultiSelectWithSearch
-                columns={table.getAllColumns()}
-                label="Show/Hide Columns"
-              />
-            </div>
-          </div>
-        </section>
-        <div className="px-5">
+    <div className="space-y-6">
+      <section className="px-5">
+        <div className="flex justify-between items-center flex-wrap gap-4">
+          <SelectFilter
+            label="Approval Status"
+            items={approvalStatus}
+            onValueChange={(value) =>
+              table.getColumn("approvalStatus")?.setFilterValue(value === "all" ? undefined : value)
+            }
+          />
+
+          <MultiSelectWithSearch columns={table.getAllColumns()} label="Show/Hide Columns" />
+        </div>
+      </section>
+
+      <div className="px-5 border rounded-lg bg-white">
+        {loading ? (
+          <div className="h-96 flex items-center justify-center text-gray-500">Loading...</div>
+        ) : (
           <Table>
             <TableHeader>
               {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id} className="bg-muted/50 border">
-                  {headerGroup.headers.map((header) => {
-                    return (
-                      <TableHead
-                        key={header.id}
-                        className="relative h-10 border-t select-none border-r"
-                      >
-                        {flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
-                      </TableHead>
-                    );
-                  })}
+                <TableRow key={headerGroup.id} className="bg-muted/50">
+                  {headerGroup.headers.map((header) => (
+                    <TableHead key={header.id} className="h-10">
+                      {flexRender(header.column.columnDef.header, header.getContext())}
+                    </TableHead>
+                  ))}
                 </TableRow>
               ))}
             </TableHeader>
             <TableBody>
-              {table.getRowModel().rows?.length ? (
+              {table.getRowModel().rows.length ? (
                 table.getRowModel().rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    data-state={row.getIsSelected() && "selected"}
-                    // TODO : add sidebar hovering effect for current page
-                  >
+                  <TableRow key={row.id} className="hover:bg-gray-50">
                     {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id} className="border">
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext(),
-                        )}
-                      </TableCell>
+                      <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : (
                 <TableRow>
-                  <TableCell
-                    colSpan={columns.length}
-                    className="h-96 text-center"
-                  >
-                    <div className="w-full flex flex-col gap-3 justify-center items-center">
-                      <img src="/folder.svg" alt="" />
-                      <h4 className="font-bold text-lg">No Item Added</h4>
-                      <p className="max-w-xs text-[#121217] text-sm">
-                        Please add a document to get started and manage your
-                        operations efficiently.
-                      </p>
-                      {/* <div className="flex items-center gap-4">
-                        <Button className="bg-[#7047EB] h-8 text-sm hover:bg-[#7047EB] shadow-none text-white rounded-md px-4 py-2">
-                          <PlusIcon className="" />
-                          Add Item
-                        </Button>
-                      </div> */}
-                    </div>
+                  <TableCell colSpan={columns.length} className="h-96 text-center text-gray-500">
+                    No approvals found
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
-        </div>
-        {table.getVisibleLeafColumns().length > 0 && (
-          <TablePagenation table={table} />
         )}
       </div>
+
+      <TablePagenation table={table} />
     </div>
   );
 };

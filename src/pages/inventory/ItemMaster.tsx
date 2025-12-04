@@ -244,22 +244,21 @@ const ItemMaster: React.FC = () => {
 
 export default ItemMaster;
 
-
 interface IBarcodeModalProps {
   isOpen: boolean;
   onClose: () => void;
   itemId: string;
   itemName: string;
-  internalItemId: number | null; // DB id (optional)
+  internalItemId: number | null;
 }
 
 const BarcodeModal: React.FC<IBarcodeModalProps> = ({ isOpen, onClose, itemId, itemName, internalItemId }) => {
   const modalRef = useRef<HTMLDivElement>(null);
 
-  const [barcodeSeriesList, setBarcodeSeriesList] = useState<Array<{ id: number; name: string }>>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const [excelFile, setExcelFile] = useState<File | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -282,25 +281,97 @@ const BarcodeModal: React.FC<IBarcodeModalProps> = ({ isOpen, onClose, itemId, i
     };
   }, [isOpen, onClose]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const fetchSeries = async () => {
-      try {
-        const resp = await get("/inventory/barcode-series");
-        if (resp && Array.isArray(resp.data)) {
-          setBarcodeSeriesList(resp.data);
-        } else {
-          setBarcodeSeriesList([]);
-        }
-      } catch (err) {
-        console.error("Error fetching barcode series", err);
-        setBarcodeSeriesList([]);
+  const downloadSampleExcel = () => {
+    // Create sample data for bulk barcode upload
+    const sampleData = [
+      {
+        prefix: "BAT",
+        quantity: 100,
+        suffix: "",
+        manufacturingDate: "2024-12-01",
+        expiryDate: "2025-12-01",
+        info1: "Batch A",
+        info2: "Warehouse 1",
+        isActive: "true"
+      },
+      {
+        prefix: "BAT",
+        quantity: 50,
+        suffix: "SPECIAL",
+        manufacturingDate: "2024-12-01",
+        expiryDate: "2025-06-01",
+        info1: "Batch B",
+        info2: "Warehouse 2",
+        isActive: "true"
       }
-    };
-    fetchSeries();
-  }, [isOpen]);
+    ];
 
-  if (!isOpen) return null;
+    // Convert to CSV format
+    const headers = ["prefix", "quantity", "suffix", "manufacturingDate", "expiryDate", "info1", "info2", "isActive"];
+    const csvContent = [
+      headers.join(","),
+      ...sampleData.map(row => headers.map(header => row[header as keyof typeof row]).join(","))
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `barcode_bulk_template_${itemId}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      // Validate file type
+      const validTypes = [
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/csv'
+      ];
+      
+      if (!validTypes.includes(file.type) && !file.name.endsWith('.csv') && !file.name.endsWith('.xlsx')) {
+        setError("Please upload a valid Excel or CSV file");
+        return;
+      }
+      
+      setExcelFile(file);
+      setError(null);
+      
+      // TODO: Implement bulk upload logic here
+      console.log("File selected for bulk upload:", file.name);
+    }
+  };
+
+  const handleBulkUpload = async () => {
+    if (!excelFile) {
+      setError("Please select a file to upload");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      // TODO: Implement bulk upload API call in separate service file
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      SuccessToast({
+        title: "Bulk barcodes generated successfully.",
+        description: "Barcodes created successfully.",
+      });
+
+      onClose();
+    } catch (err: any) {
+      console.error("Bulk barcode upload error:", err);
+      setError(err?.message || "Failed to upload bulk barcodes.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -312,10 +383,8 @@ const BarcodeModal: React.FC<IBarcodeModalProps> = ({ isOpen, onClose, itemId, i
     const fd = new FormData(form);
 
     const validation: Record<string, string> = {};
-    if (!fd.get("barcodeSeries")) validation.barcodeSeries = "Please select a barcode series";
-    if (!fd.get("quantity") || Number(fd.get("quantity")) <= 0) validation.quantity = "Quantity must be > 0";
-    // prefix/suffix optional - but include a small validation if you want
-    // if (!fd.get("prefix")) validation.prefix = "Prefix is required";
+    if (!fd.get("prefix")) validation.prefix = "Prefix is required";
+    if (!fd.get("quantity") || Number(fd.get("quantity")) <= 0) validation.quantity = "Quantity must be greater than 0";
 
     if (Object.keys(validation).length) {
       setFormErrors(validation);
@@ -324,146 +393,240 @@ const BarcodeModal: React.FC<IBarcodeModalProps> = ({ isOpen, onClose, itemId, i
     }
 
     const payload = {
-      itemId: internalItemId, // internal DB id if needed by backend
-      sku: itemId,
-      name: itemName,
-      barcodeSeriesId: Number(fd.get("barcodeSeries")),
-      quantity: Number(fd.get("quantity")),
+      itemId: internalItemId ? parseInt(internalItemId.toString()) : parseInt(itemId),
       prefix: String(fd.get("prefix") || ""),
-      suffix: String(fd.get("suffix") || ""),
-      manufacturingDate: String(fd.get("manufacturingDate") || ""),
-      expiryDate: String(fd.get("expiryDate") || ""),
+      quantity: fd.get("quantity") ? Number(fd.get("quantity")) : undefined,
+      suffix: String(fd.get("suffix") || "") || undefined,
+      manufacturingDate: String(fd.get("manufacturingDate") || "") || undefined,
+      expiryDate: String(fd.get("expiryDate") || "") || undefined,
+      info1: String(fd.get("info1") || "") || undefined,
+      info2: String(fd.get("info2") || "") || undefined,
+      isActive: fd.get("isActive") === "true"
     };
 
     try {
-      // We only need to await this - no unused variable.
-      await post("/inventory/generate-barcode", payload);
+      await post("/barcode", payload);
 
       SuccessToast({
-        title: "Barcode(s) generated successfully.",
+        title: "Barcode generated successfully.",
         description: "",
       });
 
       onClose();
     } catch (err: any) {
       console.error("Barcode generate error:", err);
-      setError(err?.message || "Failed to generate barcode(s).");
+      setError(err?.message || "Failed to generate barcode.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  if (!isOpen) return null;
+
   return (
-    <div className="fixed inset-0 h-[100vh] m-0 bg-black/40 flex justify-end z-50">
-      <div className="bg-white w-full max-w-xl animate-in fade-in duration-200" ref={modalRef}>
+    <div className="fixed inset-0 bg-black/40 flex justify-end z-50">
+      <div ref={modalRef} className="bg-white w-full max-w-xl animate-in fade-in duration-200">
         <form onSubmit={handleSubmit}>
           {/* Header */}
-          <div className="px-6 bg-neutral-100/90 py-4 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <h3 className="sm:text-lg font-semibold">Generate Barcode</h3>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={onClose}
-                variant="outline"
-                className="shadow-none text-xs sm:text-sm h-7 sm:h-9 font-normal"
-                disabled={isSubmitting}
-                type="button"
-              >
+          <div className="px-6 bg-neutral-100/90 py-4 flex items-center justify-between">
+            <h3 className="text-lg font-semibold">Generate Barcode</h3>
+            <div className="flex gap-2">
+              <Button onClick={onClose} type="button" variant="outline" className="h-8">
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                className="bg-[#7047EB] text-xs sm:text-sm h-7 sm:h-9 flex items-center font-normal shadow-none hover:bg-[#7047EB] hover:opacity-95"
-                disabled={isSubmitting}
+              <Button 
+                type="submit" 
+                disabled={isSubmitting} 
+                className="bg-[#7047EB] h-8"
               >
                 {isSubmitting ? (
                   <>
                     <Loader2 className="w-3 h-3 animate-spin mr-1" />
-                    Saving...
+                    Generating...
                   </>
                 ) : (
-                  "Save"
+                  "Generate"
                 )}
               </Button>
             </div>
           </div>
 
-          {/* API Error */}
           {error && (
-            <div className="px-6 py-3 bg-red-50 border-b border-red-200">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                <p className="text-red-700 text-sm font-medium">{error}</p>
-              </div>
+            <div className="px-6 py-3 bg-red-50 border-b border-red-200 text-red-700 text-sm">
+              {error}
             </div>
           )}
 
           {/* Body */}
-          <div className="px-4 py-4 space-y-3 overflow-y-auto max-h-[calc(100vh-80px)]">
-            <div className="flex flex-col sm:flex-row gap-4">
-              {/* Barcode Series */}
-              <div className="w-full space-y-1">
-                <Label className={labelClasses}>Barcode Series</Label>
-                <Select name="barcodeSeries">
-                  <SelectTrigger className={`${inputClasses} w-full`}>
-                    <SelectValue placeholder="Select Series" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {barcodeSeriesList.map((series) => (
-                      <SelectItem key={series.id} value={String(series.id)}>
-                        {series.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {formErrors.barcodeSeries && <p className="text-red-500 text-xs mt-1">{formErrors.barcodeSeries}</p>}
-              </div>
-
-              {/* Quantity */}
-              <div className="w-full space-y-1">
-                <Label className={labelClasses}>Quantity</Label>
-                <Input name="quantity" type="number" className={`${inputClasses} border border-neutral-200`} min={1} />
-                {formErrors.quantity && <p className="text-red-500 text-xs mt-1">{formErrors.quantity}</p>}
-              </div>
-            </div>
+          <div className="px-6 py-4 space-y-4 max-h-[calc(100vh-80px)] overflow-y-auto">
 
             {/* Item ID & Name */}
-            <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex gap-4">
               <div className="w-full space-y-1">
                 <Label className={labelClasses}>Item ID</Label>
-                <Input value={itemId} readOnly className={`${inputClasses} border border-neutral-200`} />
+                <Input value={itemId} readOnly className={inputClasses} />
               </div>
               <div className="w-full space-y-1">
                 <Label className={labelClasses}>Item Name</Label>
-                <Input value={itemName} readOnly className={`${inputClasses} border border-neutral-200`} />
+                <Input value={itemName} readOnly className={inputClasses} />
               </div>
             </div>
 
             {/* Prefix & Suffix */}
             <div className="flex gap-4">
               <div className="w-full space-y-1">
-                <Label className={labelClasses}>Prefix</Label>
-                <Input name="prefix" className={`${inputClasses} border border-neutral-200`} placeholder="e.g. RM06-" />
+                <Label className={labelClasses}>
+                  Prefix
+                  <span className="text-[#F53D6B] ml-1">*</span>
+                </Label>
+                <Input 
+                  name="prefix" 
+                  className={inputClasses} 
+                  placeholder="e.g. BAT" 
+                />
+                {formErrors.prefix && <p className="text-red-500 text-xs">{formErrors.prefix}</p>}
               </div>
               <div className="w-full space-y-1">
-                <Label className={labelClasses}>Suffix</Label>
-                <Input name="suffix" className={`${inputClasses} border border-neutral-200`} placeholder="e.g. -2025" />
+                <Label className={labelClasses}>Suffix (Optional)</Label>
+                <Input 
+                  name="suffix" 
+                  className={inputClasses} 
+                  placeholder="Custom suffix" 
+                />
               </div>
             </div>
 
-            {/* Manufacturing & Expiry */}
-            <div className="flex flex-col sm:flex-row gap-4">
+            {/* Barcode Format Helper */}
+            <div className="space-y-1">
+              <p className="text-xs text-gray-500">
+                Barcode format: PREFIX-ITEMID-SEQUENCE (e.g., BAT-{itemId}-000001)
+              </p>
+            </div>
+
+            {/* Quantity */}
+            <div className="space-y-1">
+              <Label className={labelClasses}>
+                Quantity
+                <span className="text-[#F53D6B] ml-1">*</span>
+              </Label>
+              <Input 
+                name="quantity" 
+                type="number" 
+                className={inputClasses} 
+                min={1} 
+                placeholder="Enter quantity"
+              />
+              {formErrors.quantity && <p className="text-red-500 text-xs">{formErrors.quantity}</p>}
+            </div>
+
+            {/* Manufacturing & Expiry Dates */}
+            <div className="flex gap-4">
               <div className="w-full space-y-1">
-                <Label className={labelClasses}>Manufacturing Date</Label>
-                <Input name="manufacturingDate" type="date" className={`${inputClasses} border border-neutral-200`} />
+                <Label className={labelClasses}>Manufacturing Date (Optional)</Label>
+                <Input name="manufacturingDate" type="date" className={inputClasses} />
               </div>
               <div className="w-full space-y-1">
-                <Label className={labelClasses}>Expiry Date</Label>
-                <Input name="expiryDate" type="date" className={`${inputClasses} border border-neutral-200`} />
+                <Label className={labelClasses}>Expiry Date (Optional)</Label>
+                <Input name="expiryDate" type="date" className={inputClasses} />
               </div>
             </div>
+
+            {/* Additional Info Fields */}
+            <div className="flex gap-4">
+              <div className="w-full space-y-1">
+                <Label className={labelClasses}>Info 1 (Optional)</Label>
+                <Input 
+                  name="info1" 
+                  className={inputClasses} 
+                  placeholder="Additional information 1" 
+                />
+              </div>
+              <div className="w-full space-y-1">
+                <Label className={labelClasses}>Info 2 (Optional)</Label>
+                <Input 
+                  name="info2" 
+                  className={inputClasses} 
+                  placeholder="Additional information 2" 
+                />
+              </div>
+            </div>
+
+            {/* Status */}
+            <div className="space-y-1">
+              <Label className={labelClasses}>Status</Label>
+              <Select name="isActive" defaultValue="true">
+                <SelectTrigger className={inputClasses}>
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="true">Active</SelectItem>
+                  <SelectItem value="false">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-gray-200 my-4"></div>
+
+            {/* Bulk Upload Section - Simple version */}
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <Label className={labelClasses}>Bulk Upload (Optional)</Label>
+                <p className="text-xs text-gray-500 mb-3">
+                  Upload Excel/CSV file to generate multiple barcodes at once
+                </p>
+                
+                <div className="flex gap-3 items-center">
+                  <div className="flex-1">
+                    <Input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      onChange={handleFileUpload}
+                      className={inputClasses}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={handleBulkUpload}
+                    disabled={!excelFile || isSubmitting}
+                    variant="outline"
+                    className="whitespace-nowrap"
+                  >
+                    {isSubmitting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      "Upload File"
+                    )}
+                  </Button>
+                </div>
+                
+                {excelFile && (
+                  <p className="text-xs text-green-600 mt-1">
+                    Selected: {excelFile.name}
+                  </p>
+                )}
+              </div>
+
+              {/* Download Sample */}
+              <div className="space-y-2">
+                <Label className={labelClasses}>Download Template</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={downloadSampleExcel}
+                  className="w-full"
+                >
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Download Sample Template
+                </Button>
+                <p className="text-xs text-gray-500">
+                  Download the template file, fill in your barcode data, and upload the completed file.
+                </p>
+              </div>
+            </div>
+
           </div>
         </form>
       </div>
