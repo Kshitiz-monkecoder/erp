@@ -108,3 +108,15 @@ export const ProductionSubLinks: INavlinks[] = [
     link: "/production/bom/create",
   },
 ];
+
+
+export const settingSubLinks : INavlinks[] = [
+  { 
+    name: "User Management", 
+    link: "/settings/users?tab=user-management" 
+  },
+  { 
+    name: "Teams", 
+    link: "/settings/teams?tab=teams" 
+  },
+]

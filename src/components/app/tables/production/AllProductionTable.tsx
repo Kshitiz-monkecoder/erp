@@ -403,7 +403,7 @@ const AllProductionTable: React.FC = () => {
                     className="hover:bg-gray-50 cursor-pointer"
                     onClick={() => {
                       const processId = row.getValue("processNumber") as string;
-                      navigate(`/production/process/${processId}`);
+                       navigate(`/production/process-details?processId=${processId}`);
                     }}
                   >
                     {row.getVisibleCells().map((cell) => (

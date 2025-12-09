@@ -45,6 +45,11 @@ import BOMDetails from "./components/app/modals/BOMDetails";
 import BillOfMaterialTable from "./components/app/tables/production/BillOfMaterialTable";
 import CreateBom from "./components/app/CreateBOM";
 import CreateProductionOrder from "./components/app/tables/production/create-production-order";
+import EditBOM from "./pages/bom-edit";
+import ProcessDetails from "./pages/ProcessDeatils";
+import UserManagement from "./pages/setting/UserManagement";
+import Teams from "./pages/setting/TeamPage"; 
+
 
 const App: React.FC = () => {
   return (
@@ -118,9 +123,15 @@ const App: React.FC = () => {
             {/* ADD THESE INSIDE MainLayout TO SHOW WITH SIDEBAR */}
             <Route path="production/bom" element={<BillOfMaterialTable />} />
             <Route path="production/bom/create" element={<CreateBom />} />
+            <Route path="/production/bom/edit/:id" element={<EditBOM />} />
+            <Route path ="/production/process-details" element={<ProcessDetails/>}/>
             
             {/* ADD THIS TO MainLayout ROUTE GROUP */}
             <Route path="production/create-order" element={<CreateProductionOrder />} />
+
+            {/* Settings*/}
+            <Route path="settings/users" element={<UserManagement />} />
+            <Route path="settings/teams" element={<Teams />} />
           </Route>
           
           {/* Orders Layout Routes (different layout) */}

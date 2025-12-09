@@ -71,6 +71,10 @@ export interface BOMCreateRequest {
   bomItems: BOMItemRequest[];
 }
 
+// Add this line - either option works:
+export interface BOMUpdateRequest extends Partial<BOMCreateRequest> {}
+// OR: export type BOMUpdateRequest = BOMCreateRequest;
+
 export interface BOMResponse {
   id: number;
   docNumber: string;
@@ -113,10 +117,10 @@ export const bomAPI = {
   },
 
   // Update BOM
-  updateBOM: async (id: number, data: Partial<BOMCreateRequest>): Promise<APIResponse<BOMResponse>> => {
+  updateBOM: async (id: number, data: BOMUpdateRequest): Promise<APIResponse<BOMResponse>> => {
     return await put(`/production/bom/${id}`, data);
   },
-
+  
   // Delete BOM
   deleteBOM: async (id: number): Promise<APIResponse<{ message: string }>> => {
     return await del(`/production/bom/${id}`);

@@ -8,6 +8,7 @@ import {
   InventorySubLinks,
   BuyersAndSuppliersSubLinks,
   ProductionSubLinks,
+  settingSubLinks,
 } from "@/lib/subnavLinks";
 import {get} from "../../lib/apiService"; // Adjust the import path as necessary
 interface SidebarProps {
@@ -75,7 +76,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     {
       icon: "/sidebar/settings.svg",
       name: "Settings",
-      nestedLinks: [],
+      nestedLinks: [...settingSubLinks],
       link: "#",
     },
   ];
