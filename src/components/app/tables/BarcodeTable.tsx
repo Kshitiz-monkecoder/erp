@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -13,7 +13,7 @@ import {
   RowData,
   useReactTable,
 } from "@tanstack/react-table";
-import { PlusIcon, Eye, Download, List } from "lucide-react";
+import { Download, List } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -127,7 +127,7 @@ const AllBarcodesDialog: React.FC<{
     createdAt: string;
     isActive: boolean;
   }>;
-}> = ({ grnId, grnDocumentNumber, barcodes }) => {
+}> = ({ grnDocumentNumber, barcodes }) => {
   return (
     <Dialog>
       <DialogTrigger asChild>

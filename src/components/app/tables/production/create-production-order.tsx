@@ -24,7 +24,6 @@ import {
   Trash2,
   Search,
   Loader2,
-  AlertCircle,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
@@ -92,17 +91,19 @@ const CreateProductionOrder: React.FC = () => {
 
   // LOADING STATES
   const [loadingItems, setLoadingItems] = useState(false);
-  const [loadingWarehouses, setLoadingWarehouses] = useState(false);
   const [loadingBOMs, setLoadingBOMs] = useState(false);
   const [creatingProcess, setCreatingProcess] = useState(false);
   
   // DATA STATES
-  const [errorItems, setErrorItems] = useState<string | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [boms, setBoms] = useState<BOMItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchBomQuery, setSearchBomQuery] = useState("");
+
+  // 🔹 Row-wise BOMs and loading (ADDED)
+  const [rowBoms, setRowBoms] = useState<Record<number, BOMItem[]>>({});
+  const [rowLoadingBOMs, setRowLoadingBOMs] = useState<Record<number, boolean>>({});
 
   // PRODUCTION ITEMS
   const [productionItems, setProductionItems] = useState<ProductionOrderItem[]>([
@@ -126,31 +127,26 @@ const CreateProductionOrder: React.FC = () => {
 
   // -------------------- FETCH ITEMS --------------------
   useEffect(() => {
-    const loadItems = async () => {
-      try {
-        setLoadingItems(true);
-        const response = await inventoryAPI.getItems();
+  const loadItems = async () => {
+    try {
+      setLoadingItems(true);
+      const response = await inventoryAPI.getItems();
 
-        if (response?.status && Array.isArray(response.data)) {
-          setItems(response.data);
-        } else {
-          setErrorItems(response?.message || "Unable to load items");
-        }
-      } catch {
-        setErrorItems("Network error");
-      } finally {
-        setLoadingItems(false);
+      if (response?.status && Array.isArray(response.data)) {
+        setItems(response.data);
       }
-    };
+    } finally {
+      setLoadingItems(false);
+    }
+  };
 
-    loadItems();
-  }, []);
+  loadItems();
+}, []);
 
   // -------------------- FETCH WAREHOUSES --------------------
   useEffect(() => {
     const loadWarehouses = async () => {
       try {
-        setLoadingWarehouses(true);
         const response = await warehouseAPI.getWarehouses();
 
         if (response?.status && Array.isArray(response.data)) {
@@ -160,14 +156,13 @@ const CreateProductionOrder: React.FC = () => {
         console.log("Warehouse Error:", err);
         toast.error("Failed to load warehouses");
       } finally {
-        setLoadingWarehouses(false);
       }
     };
 
     loadWarehouses();
   }, []);
 
-  // -------------------- FETCH BOMS --------------------
+  // -------------------- FETCH ALL BOMS (still kept, not removed) --------------------
   useEffect(() => {
     const loadBOMs = async () => {
       try {
@@ -195,7 +190,7 @@ const CreateProductionOrder: React.FC = () => {
       item.sku.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // -------------------- FILTER BOMS --------------------
+  // -------------------- FILTER BOMS (global, used as fallback) --------------------
   const filteredBoms = boms.filter(
     (bom) =>
       bom.docNumber.toLowerCase().includes(searchBomQuery.toLowerCase()) ||
@@ -233,8 +228,8 @@ const CreateProductionOrder: React.FC = () => {
     setProductionItems(updated);
   };
 
-  // -------------------- SELECT ITEM --------------------
-  const handleItemSelect = (index: number, itemId: string) => {
+  // -------------------- SELECT ITEM + FETCH BOMs FOR THAT ITEM --------------------
+  const handleItemSelect = async (index: number, itemId: string) => {
     const selected = items.find((i) => i.id.toString() === itemId);
     if (!selected) return;
 
@@ -245,9 +240,34 @@ const CreateProductionOrder: React.FC = () => {
       itemName: selected.name,
       currentStock: selected.currentStock,
       uom: selected.unit?.name || "",
+      bom: "", // reset BOM when item changes
     };
 
     setProductionItems(updated);
+
+    // 🔹 Fetch BOMs for this specific finished goods item
+    try {
+      setRowLoadingBOMs((prev) => ({ ...prev, [index]: true }));
+      const response = await productionAPI.getBOMByFinishedGoodItem(
+        Number(itemId)
+      );
+
+      if (response?.status && Array.isArray(response.data)) {
+        setRowBoms((prev) => ({
+          ...prev,
+          [index]: response.data,
+        }));
+      } else {
+        setRowBoms((prev) => ({ ...prev, [index]: [] }));
+        toast.error("No BOMs found for selected item");
+      }
+    } catch (err) {
+      console.error("Error fetching BOMs for item:", err);
+      setRowBoms((prev) => ({ ...prev, [index]: [] }));
+      toast.error("Failed to load BOMs for selected item");
+    } finally {
+      setRowLoadingBOMs((prev) => ({ ...prev, [index]: false }));
+    }
   };
 
   // -------------------- UPDATE FIELD --------------------
@@ -322,7 +342,7 @@ const CreateProductionOrder: React.FC = () => {
           continue;
         }
 
-        // Get BOM ID from the selected BOM string (format: "ID: 123 - BOM0001")
+        // Get BOM ID from the selected BOM string (format: "ID: 123 - BOM0001") OR direct id
         const bomMatch = item.bom.match(/ID:\s*(\d+)/);
         const bomId = bomMatch ? parseInt(bomMatch[1]) : parseInt(item.bom);
 
@@ -403,10 +423,10 @@ const CreateProductionOrder: React.FC = () => {
   };
 
   // -------------------- GENERATE ORDER NUMBER --------------------
-  const generateOrderNumber = () => {
-    const timestamp = new Date().getTime();
-    return `PO${timestamp.toString().slice(-6)}`;
-  };
+  // const generateOrderNumber = () => {
+  //   const timestamp = new Date().getTime();
+  //   return `PO${timestamp.toString().slice(-6)}`;
+  // };
 
   // -------------------- ITEM SELECT DROPDOWN --------------------
   const ItemSelect = ({
@@ -466,10 +486,32 @@ const CreateProductionOrder: React.FC = () => {
   const BOMSelect = ({
     value,
     onChange,
+    rowIndex,
   }: {
     value: string;
     onChange: (value: string) => void;
+    rowIndex: number;
   }) => {
+    const rowSpecificBoms = rowBoms[rowIndex] || [];
+    const hasItemSelected = !!productionItems[rowIndex]?.itemId;
+
+    // If row has its own BOMs, filter those; else fallback to global filteredBoms
+    const effectiveList =
+      rowSpecificBoms.length > 0
+        ? rowSpecificBoms.filter(
+            (bom) =>
+              bom.docNumber
+                .toLowerCase()
+                .includes(searchBomQuery.toLowerCase()) ||
+              bom.docName
+                .toLowerCase()
+                .includes(searchBomQuery.toLowerCase())
+          )
+        : filteredBoms;
+
+    const isRowLoading = rowLoadingBOMs[rowIndex] || false;
+    const isLoading = isRowLoading || loadingBOMs;
+
     return (
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger className="h-9">
@@ -490,21 +532,34 @@ const CreateProductionOrder: React.FC = () => {
             </div>
           </div>
 
-          {loadingBOMs ? (
+          {!hasItemSelected ? (
+            <p className="text-center py-4 text-sm">
+              Select an item first
+            </p>
+          ) : isLoading ? (
             <div className="text-center py-3">
               <Loader2 className="animate-spin h-5 w-5 mx-auto" />
             </div>
-          ) : filteredBoms.length === 0 ? (
+          ) : effectiveList.length === 0 ? (
             <p className="text-center py-4 text-sm">No BOMs found</p>
           ) : (
-            filteredBoms.map((bom) => (
-              <SelectItem key={bom.id} value={`ID: ${bom.id} - ${bom.docNumber}`}>
+            effectiveList.map((bom) => (
+              <SelectItem
+                key={bom.id}
+                value={`ID: ${bom.id} - ${bom.docNumber}`}
+              >
                 <div className="flex flex-col">
                   <span className="font-medium">{bom.docNumber}</span>
-                  <span className="text-xs text-gray-500">{bom.docName}</span>
-                  <span className={`text-xs ${bom.status === 'published' ? 'text-green-600' : 'text-yellow-600'}`}>
+                  {/* <span className="text-xs text-gray-500">{bom.docName}</span>
+                  <span
+                    className={`text-xs ${
+                      bom.status === "published"
+                        ? "text-green-600"
+                        : "text-yellow-600"
+                    }`}
+                  >
                     Status: {bom.status}
-                  </span>
+                  </span> */}
                 </div>
               </SelectItem>
             ))
@@ -529,21 +584,6 @@ const CreateProductionOrder: React.FC = () => {
           <p className="text-sm text-gray-600 mt-1">
             Create production processes from BOMs for selected items
           </p>
-        </div>
-      </div>
-
-      {/* VALIDATION MESSAGE */}
-      <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-        <div className="flex items-start gap-2">
-          <AlertCircle className="h-5 w-5 text-blue-600 mt-0.5" />
-          <div>
-            <p className="text-sm text-blue-800 font-medium">
-              Required Fields: Item, Quantity, and BOM
-            </p>
-            <p className="text-xs text-blue-600 mt-1">
-              Each production process will be created from the selected BOM with the specified quantity.
-            </p>
-          </div>
         </div>
       </div>
 
@@ -620,6 +660,7 @@ const CreateProductionOrder: React.FC = () => {
                     <BOMSelect
                       value={row.bom}
                       onChange={(v) => updateItemField(index, "bom", v)}
+                      rowIndex={index}
                     />
                   </TableCell>
 

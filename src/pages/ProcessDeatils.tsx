@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft,
-  Plus,
   Trash2,
   ChevronDown,
   ChevronUp,
@@ -14,7 +13,6 @@ import {
   GitBranch,
   DollarSign,
   Loader2,
-  Save,
   Eye,
   EyeOff,
   Calendar,
@@ -25,6 +23,7 @@ import {
   Factory,
   Zap,
   Wrench,
+  FileText,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
@@ -35,8 +34,10 @@ import {
   DialogTitle,
   DialogTrigger,
   DialogDescription,
+  DialogFooter,
+  DialogClose,
 } from "@/components/ui/dialog";
-import { productionAPI, type ProductionProcess, type ProductionItem, type RawMaterialItem, type RoutingStep, type ScrapItem, type OtherCharge } from "@/services/productionService";
+import { productionAPI, type ProductionItem, type RawMaterialItem, type RoutingStep, type ScrapItem, type OtherCharge } from "@/services/productionService";
 
 // -------------------- TYPES --------------------
 interface ProcessDetailsType {
@@ -91,6 +92,7 @@ const ProcessDetails: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [processId, setProcessId] = useState<string | null>(null);
+  const [processLogsOpen, setProcessLogsOpen] = useState(false);
   
   const [processDetails, setProcessDetails] = useState<ProcessDetailsType>({
     processNumber: "",
@@ -309,7 +311,7 @@ const ProcessDetails: React.FC = () => {
   const getStageFromStatus = (status: string): string => {
     switch (status) {
       case 'planned': return 'Planning';
-      case 'published': return 'In Progress';
+      case 'publish': return 'In Progress';
       case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';
       default: return 'Planning';
@@ -348,37 +350,37 @@ const ProcessDetails: React.FC = () => {
   };
 
   // Update production process
-  const handleUpdateProduction = async () => {
-    if (!processId) {
-      toast.error("No process ID found");
-      return;
-    }
+  // const handleUpdateProduction = async () => {
+  //   if (!processId) {
+  //     toast.error("No process ID found");
+  //     return;
+  //   }
 
-    try {
-      setSaving(true);
+  //   try {
+  //     setSaving(true);
       
-      const updateData = {
-        orderDeliveryDate: processDetails.orderDeliveryDate,
-        expectedCompletionDate: processDetails.expectedCompletionDate,
-        status: processDetails.status.toLowerCase() as "planned" | "published" | "completed" | "cancelled"
-      };
+  //     const updateData = {
+  //       orderDeliveryDate: processDetails.orderDeliveryDate,
+  //       expectedCompletionDate: processDetails.expectedCompletionDate,
+  //       status: processDetails.status.toLowerCase() as "planned" | "publish" | "completed" | "cancelled"
+  //     };
 
-      const response = await productionAPI.updateProduction(parseInt(processId), updateData);
+  //     const response = await productionAPI.updateProduction(parseInt(processId), updateData);
 
-      if (response.status) {
-        toast.success("Process updated successfully!");
-        // Refresh the page data
-        window.location.reload();
-      } else {
-        toast.error(response.message || "Failed to update process");
-      }
-    } catch (error) {
-      console.error("Error updating process:", error);
-      toast.error("Failed to update process");
-    } finally {
-      setSaving(false);
-    }
-  };
+  //     if (response.status) {
+  //       toast.success("Process updated successfully!");
+  //       // Refresh the page data
+  //       window.location.reload();
+  //     } else {
+  //       toast.error(response.message || "Failed to update process");
+  //     }
+  //   } catch (error) {
+  //     console.error("Error updating process:", error);
+  //     toast.error("Failed to update process");
+  //   } finally {
+  //     setSaving(false);
+  //   }
+  // };
 
   // Publish process
   const handlePublish = async () => {
@@ -393,10 +395,10 @@ const ProcessDetails: React.FC = () => {
       const response = await productionAPI.publishProduction(parseInt(processId));
 
       if (response.status) {
-        toast.success("Process published successfully!");
+        toast.success("Process publish successfully!");
         setProcessDetails(prev => ({
           ...prev,
-          status: "published",
+          status: "publish",
           stage: "In Progress"
         }));
         // Refresh the page data
@@ -526,7 +528,7 @@ const ProcessDetails: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.finishedGoods.map((fg, index) => (
+                  {data.finishedGoods.map((fg) => (
                     <tr key={fg.id} className="border-t hover:bg-white">
                       <td className="px-4 py-3 border font-medium">{fg.itemId}</td>
                       <td className="px-4 py-3 border font-medium">{fg.itemName}</td>
@@ -572,7 +574,7 @@ const ProcessDetails: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rawMaterials.map((rm, index) => (
+                  {data.rawMaterials.map((rm) => (
                     <tr key={rm.id} className="border-t hover:bg-white">
                       <td className="px-4 py-3 border font-medium">{rm.itemId}</td>
                       <td className="px-4 py-3 border">{rm.itemName}</td>
@@ -603,7 +605,7 @@ const ProcessDetails: React.FC = () => {
           <div className="p-6 border-b bg-gray-50">
             {data.routing.length > 0 ? (
               <div className="space-y-4">
-                {data.routing.map((route, index) => (
+                {data.routing.map((route) => (
                   <div key={route.id} className="border rounded-lg p-4 bg-white">
                     <div className="flex items-center justify-between mb-2">
                       <h4 className="font-semibold text-lg">{route.name}</h4>
@@ -667,7 +669,7 @@ const ProcessDetails: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.scrapItems.map((scrap, index) => (
+                    {data.scrapItems.map((scrap) => (
                       <tr key={scrap.id} className="border-t hover:bg-white">
                         <td className="px-4 py-3 border font-medium">{scrap.itemId}</td>
                         <td className="px-4 py-3 border">{scrap.itemName}</td>
@@ -769,6 +771,144 @@ const ProcessDetails: React.FC = () => {
     );
   };
 
+  // Process Logs Dialog Component
+  const ProcessLogsDialog = () => (
+    <Dialog open={processLogsOpen} onOpenChange={setProcessLogsOpen}>
+      <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="text-2xl font-bold text-gray-800">
+            Process Logs
+          </DialogTitle>
+          <DialogDescription className="text-gray-600">
+            View all activities and changes made to this production process.
+          </DialogDescription>
+        </DialogHeader>
+        
+        <div className="flex-1 overflow-y-auto pr-4">
+          <div className="space-y-6">
+            {/* Process Information Summary */}
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <h3 className="font-semibold text-blue-800 mb-2">Process Information</h3>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-gray-600">Process ID:</span>
+                  <span className="font-medium ml-2">{processDetails.processNumber}</span>
+                </div>
+                <div>
+                  <span className="text-gray-600">Status:</span>
+                  <span className="font-medium ml-2 capitalize">{processDetails.status}</span>
+                </div>
+                <div>
+                  <span className="text-gray-600">Created By:</span>
+                  <span className="font-medium ml-2">{processDetails.createdBy}</span>
+                </div>
+                <div>
+                  <span className="text-gray-600">Created Date:</span>
+                  <span className="font-medium ml-2">{processDetails.creationDate}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Logs Table */}
+            <div>
+              <h3 className="font-semibold text-gray-700 mb-3">Activity Log</h3>
+              <div className="border rounded-lg overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-100">
+                      <tr>
+                        <th className="px-4 py-3 text-left font-medium text-gray-700">Timestamp</th>
+                        <th className="px-4 py-3 text-left font-medium text-gray-700">Action</th>
+                        <th className="px-4 py-3 text-left font-medium text-gray-700">User</th>
+                        <th className="px-4 py-3 text-left font-medium text-gray-700">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {/* Placeholder for logs - Replace with actual data from API */}
+                      <tr className="hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <div className="text-gray-600">2024-01-15 14:30:00</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">Created</span>
+                        </td>
+                        <td className="px-4 py-3 font-medium">{processDetails.createdBy}</td>
+                        <td className="px-4 py-3 text-gray-600">
+                          Production process created with ID {processDetails.processNumber}
+                        </td>
+                      </tr>
+                      <tr className="hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <div className="text-gray-600">2024-01-16 10:15:00</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">Updated</span>
+                        </td>
+                        <td className="px-4 py-3 font-medium">{processDetails.lastModifiedBy}</td>
+                        <td className="px-4 py-3 text-gray-600">
+                          Updated expected completion date
+                        </td>
+                      </tr>
+                      {processDetails.status === 'publish' && (
+                        <tr className="hover:bg-gray-50">
+                          <td className="px-4 py-3">
+                            <div className="text-gray-600">{processDetails.lastModifiedDate}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded">publish</span>
+                          </td>
+                          <td className="px-4 py-3 font-medium">{processDetails.lastModifiedBy}</td>
+                          <td className="px-4 py-3 text-gray-600">
+                            Process publish and moved to In Progress status
+                          </td>
+                        </tr>
+                      )}
+                      {/* Add more log entries here based on actual API data */}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              
+              {/* No Logs Message */}
+              <div className="text-center py-8 text-gray-500">
+                <FileText className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                <p>No logs available yet. Logs will appear as actions are performed on this process.</p>
+              </div>
+            </div>
+
+            {/* Export Section */}
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <h3 className="font-semibold text-gray-700 mb-2">Export Logs</h3>
+              <div className="flex gap-3">
+                <Button variant="outline" size="sm">
+                  Export as CSV
+                </Button>
+                <Button variant="outline" size="sm">
+                  Export as PDF
+                </Button>
+                <Button variant="outline" size="sm">
+                  Print Logs
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter className="mt-6 pt-4 border-t">
+          <DialogClose asChild>
+            <Button variant="outline">Close</Button>
+          </DialogClose>
+          <Button onClick={() => {
+            // Implement refresh logs functionality here
+            toast.info("Refreshing logs...");
+          }}>
+            Refresh Logs
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
   // Loading state
   if (loading) {
     return (
@@ -800,15 +940,12 @@ const ProcessDetails: React.FC = () => {
                   <div className="text-sm">
                     Status: <span className={`font-semibold ${
                       processDetails.status === 'planned' ? 'text-blue-600' :
-                      processDetails.status === 'published' ? 'text-yellow-600' :
+                      processDetails.status === 'publish' ? 'text-yellow-600' :
                       processDetails.status === 'completed' ? 'text-green-600' :
                       'text-red-600'
                     }`}>
                       {processDetails.status.charAt(0).toUpperCase() + processDetails.status.slice(1)}
                     </span>
-                  </div>
-                  <div className="text-sm text-gray-500">
-                    Stage: <span className="font-semibold text-gray-700">{processDetails.stage}</span>
                   </div>
                 </div>
               </div>
@@ -839,8 +976,8 @@ const ProcessDetails: React.FC = () => {
                 </Button>
               )}
 
-              {/* Complete Button (only for published status) */}
-              {processDetails.status === 'published' && (
+              {/* Complete Button (only for publish status) */}
+              {processDetails.status === 'publish' && (
                 <Button 
                   variant="outline"
                   onClick={handleComplete}
@@ -852,27 +989,20 @@ const ProcessDetails: React.FC = () => {
                 </Button>
               )}
 
-              {/* Update Button */}
-              <Button 
-                variant="outline"
-                onClick={handleUpdateProduction}
-                disabled={saving || processDetails.status === 'completed'}
-              >
-                {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                Save Changes
-              </Button>
-
-              {/* Publish Button (only for planned status) */}
-              {processDetails.status === 'planned' && (
-                <Button 
-                  className="bg-[#105076] hover:bg-[#0d4566] text-white"
-                  onClick={handlePublish}
-                  disabled={saving}
-                >
-                  {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                  Publish Process
-                </Button>
-              )}
+              {/* Process Logs Button */}
+              <Dialog open={processLogsOpen} onOpenChange={setProcessLogsOpen}>
+                <DialogTrigger asChild>
+                  <Button 
+                    variant="outline"
+                    disabled={saving}
+                    className="flex items-center gap-2"
+                  >
+                    <FileText className="w-4 h-4" />
+                    Process Logs
+                  </Button>
+                </DialogTrigger>
+                <ProcessLogsDialog />
+              </Dialog>
             </div>
           </div>
         </div>
@@ -918,7 +1048,7 @@ const ProcessDetails: React.FC = () => {
                   <span className="text-sm font-medium text-gray-600">Status:</span>
                   <span className={`px-2 py-1 text-xs rounded ${
                     processDetails.status === 'planned' ? 'bg-blue-100 text-blue-800' :
-                    processDetails.status === 'published' ? 'bg-yellow-100 text-yellow-800' :
+                    processDetails.status === 'publish' ? 'bg-yellow-100 text-yellow-800' :
                     processDetails.status === 'completed' ? 'bg-green-100 text-green-800' :
                     'bg-red-100 text-red-800'
                   }`}>
@@ -1173,25 +1303,6 @@ const ProcessDetails: React.FC = () => {
             <div className="flex gap-4">
               {processDetails.status === 'planned' && (
                 <Button 
-                  variant="outline"
-                  onClick={handleDelete}
-                  disabled={saving}
-                  className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete Process
-                </Button>
-              )}
-              <Button 
-                variant="outline" 
-                onClick={handleUpdateProduction} 
-                disabled={saving || processDetails.status === 'completed'}
-              >
-                {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                Save Changes
-              </Button>
-              {processDetails.status === 'planned' && (
-                <Button 
                   onClick={handlePublish} 
                   className="bg-[#105076] hover:bg-[#0d4566]" 
                   disabled={saving}
@@ -1200,7 +1311,7 @@ const ProcessDetails: React.FC = () => {
                   Publish Process
                 </Button>
               )}
-              {processDetails.status === 'published' && (
+              {processDetails.status === 'publish' && (
                 <Button 
                   onClick={handleComplete} 
                   className="bg-green-600 hover:bg-green-700" 

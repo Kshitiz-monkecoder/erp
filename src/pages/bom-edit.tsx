@@ -148,7 +148,7 @@ const ItemSelect: React.FC<{
   disabled?: boolean;
 }> = ({ value, onValueChange, items, placeholder = "Select item", disabled = false }) => {
   const [search, setSearch] = useState("");
-  const [isOpen, setIsOpen] = useState(false);
+  // const [isOpen, setIsOpen] = useState(false);
 
   const filteredItems = items.filter(item =>
     item.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -164,9 +164,9 @@ const ItemSelect: React.FC<{
         onValueChange={(val) => {
           const item = items.find(i => i.id === val);
           onValueChange(val, item);
-          setIsOpen(false);
+          // setIsOpen(false);
         }}
-        onOpenChange={setIsOpen}
+        // onOpenChange={setIsOpen}
         disabled={disabled}
       >
         <SelectTrigger className="h-9 w-full">
@@ -1174,7 +1174,7 @@ const EditBOM: React.FC = () => {
   const [description, setDescription] = useState("");
   const [comments, setComments] = useState("");
   const [docName, setDocName] = useState("");
-  const [customer, setCustomer] = useState("");
+  // const [customer, setCustomer] = useState("");
   const [fgStore, setFgStore] = useState("");
   const [rmStore, setRmStore] = useState("");
   const [scrapStore, setScrapStore] = useState("");

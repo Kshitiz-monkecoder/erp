@@ -4,10 +4,11 @@ import { X } from "lucide-react";
 import React, { useRef } from "react";
 import type { Table } from "@tanstack/react-table";
 import SelectFilter, { OptionType } from "../SelectFilter";
-import { BillsOfMaterialData } from "../tables/production/BillOfMaterialTable";
+import type { BOMRow } from "../tables/production/BillOfMaterialTable";
+
 
 interface Props extends IModalProps {
-  table: Table<BillsOfMaterialData>;
+  table: Table<BOMRow>;
 }
 
 const FilterBillsofMaterialModal: React.FC<Props> = ({

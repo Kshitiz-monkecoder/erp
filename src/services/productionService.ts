@@ -97,7 +97,7 @@ export interface ProductionLog {
 export interface ProductionProcess {
   id: number;
   docNumber: string;
-  status: "planned" | "published" | "completed" | "cancelled";
+  status: "planned" | "publish" | "completed" | "cancelled";
   orderDeliveryDate: string | null;
   expectedCompletionDate: string | null;
   createdAt: string;
@@ -148,7 +148,7 @@ export interface CreateProductionRequest {
 export interface UpdateProductionRequest {
   orderDeliveryDate?: string;
   expectedCompletionDate?: string;
-  status?: "planned" | "published" | "completed" | "cancelled";
+  status?: "planned" | "publish" | "completed" | "cancelled";
 }
 
 // Production List Query Parameters
@@ -171,6 +171,12 @@ export interface ProductionListResponse {
 // -------------------- API FUNCTIONS --------------------
 
 export const productionAPI = {
+
+  // 📌 Fetch BOM list for a selected Item (Finished Goods)
+    getBOMByFinishedGoodItem: async (itemId: number): Promise<any> => {
+    return await get(`/production/bom/finished-goods-item/${itemId}`);
+  },
+
   // 📍 1️⃣ Create Production from BOM
   createProductionFromBOM: async (data: CreateProductionRequest): Promise<APIResponse<ProductionProcess>> => {
     return await post("/production/proccess", data);
@@ -215,13 +221,13 @@ export const productionAPI = {
   },
 
   // Update production status
-  updateProductionStatus: async (id: number, status: "planned" | "published" | "completed" | "cancelled"): Promise<APIResponse<ProductionProcess>> => {
+  updateProductionStatus: async (id: number, status: "planned" | "publish" | "completed" | "cancelled"): Promise<APIResponse<ProductionProcess>> => {
     return await put(`/production/proccess/${id}`, { status });
   },
 
-  // Publish production (change status from planned to published)
+  // Publish production (change status from planned to publish)
   publishProduction: async (id: number): Promise<APIResponse<ProductionProcess>> => {
-    return await put(`/production/proccess/${id}`, { status: "published" });
+    return await put(`/production/proccess/${id}`, { status: "publish" });
   },
 
   // Complete production

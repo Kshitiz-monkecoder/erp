@@ -146,7 +146,6 @@ const ItemSelect: React.FC<{
   disabled?: boolean;
 }> = ({ value, onValueChange, items, placeholder = "Select item", disabled = false }) => {
   const [search, setSearch] = useState("");
-  const [isOpen, setIsOpen] = useState(false);
 
   const filteredItems = items.filter(item =>
     item.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -162,9 +161,7 @@ const ItemSelect: React.FC<{
         onValueChange={(val) => {
           const item = items.find(i => i.id === val);
           onValueChange(val, item);
-          setIsOpen(false);
         }}
-        onOpenChange={setIsOpen}
         disabled={disabled}
       >
         <SelectTrigger className="h-9 w-full">

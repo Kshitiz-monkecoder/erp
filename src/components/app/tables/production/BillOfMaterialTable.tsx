@@ -13,7 +13,7 @@ import {
   RowData,
   useReactTable,
 } from "@tanstack/react-table";
-import { PlusIcon, Eye, Funnel } from "lucide-react";
+import { PlusIcon, Eye } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -50,13 +50,15 @@ type BOMRow = {
   createdBy: string;
 };
 
+export type { BOMRow };
+
 const BillOfMaterialTable: React.FC = () => {
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [rows, setRows] = useState<BOMRow[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [rawResponse, setRawResponse] = useState<any[]>([]); // keep for future use if needed
-  const [showFilterModal, setShowFilterModal] = useState(false);
+  // const [rawResponse, setRawResponse] = useState<any[]>([]); // keep for future use if needed
+  // const [showFilterModal, setShowFilterModal] = useState(false);
 
   const navigate = useNavigate();
 
@@ -74,14 +76,14 @@ const BillOfMaterialTable: React.FC = () => {
       if (!data) {
         setError("Invalid response from server");
         setRows([]);
-        setRawResponse([]);
+        // setRawResponse([]);
         return;
       }
 
       // The API might come as { status: true, data: [...] } or directly as array
       const list = Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [];
 
-      setRawResponse(list);
+      // setRawResponse(list);
 
       // Transform to BOMRow
       const transformed: BOMRow[] = list.map((b: any) => {
@@ -112,7 +114,7 @@ const BillOfMaterialTable: React.FC = () => {
       if (err?.response?.data?.message) setError(err.response.data.message);
       else setError("Failed to fetch BOMs");
       setRows([]);
-      setRawResponse([]);
+      // setRawResponse([]);
     } finally {
       setLoading(false);
     }

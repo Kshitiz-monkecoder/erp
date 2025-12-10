@@ -1,7 +1,7 @@
-import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
+import axios from 'axios';
 
 // Define base URL from environment or use default
-const BASE_URL  = import.meta.env.VITE_API_BASE_URL || 'http://82.29.161.4:8005/api/v1';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://82.29.161.4:8005/api/v1';
 
 // Create axios instance with base config
 const api = axios.create({
@@ -12,7 +12,6 @@ const api = axios.create({
   timeout: 30000, // 30 seconds timeout
 });
 
-// Request interceptor for adding auth token - CHANGED to "token"
 // Request interceptor for adding auth token
 api.interceptors.request.use(
   (config) => {
@@ -22,7 +21,7 @@ api.interceptors.request.use(
     console.log("Token exists:", !!token);
     console.log("Token value:", token ? `${token.substring(0, 20)}...` : "No token");
     
-    if (token) {
+    if (token && config.headers) {
       config.headers.Authorization = `${token}`;
       console.log("Authorization header set");
     } else {
@@ -37,7 +36,6 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor for error handling - CHANGED to "token"
 // Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
@@ -54,9 +52,9 @@ api.interceptors.response.use(
 );
 
 // Generic API functions
-export const get = async <T = any>(url: string, config?: AxiosRequestConfig): Promise<T> => {
+export const get = async <T = any>(url: string, config?: any): Promise<T> => {
   try {
-    const response: AxiosResponse<T> = await api.get(url, config);
+    const response = await api.get<T>(url, config);
     return response.data;
   } catch (error) {
     console.error('GET Error:', error);
@@ -64,9 +62,9 @@ export const get = async <T = any>(url: string, config?: AxiosRequestConfig): Pr
   }
 };
 
-export const post = async <T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> => {
+export const post = async <T = any>(url: string, data?: any, config?: any): Promise<T> => {
   try {
-    const response: AxiosResponse<T> = await api.post(url, data, config);
+    const response = await api.post<T>(url, data, config);
     return response.data;
   } catch (error) {
     console.error('POST Error:', error);
@@ -74,9 +72,9 @@ export const post = async <T = any>(url: string, data?: any, config?: AxiosReque
   }
 };
 
-export const put = async <T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> => {
+export const put = async <T = any>(url: string, data?: any, config?: any): Promise<T> => {
   try {
-    const response: AxiosResponse<T> = await api.put(url, data, config);
+    const response = await api.put<T>(url, data, config);
     return response.data;
   } catch (error) {
     console.error('PUT Error:', error);
@@ -84,9 +82,9 @@ export const put = async <T = any>(url: string, data?: any, config?: AxiosReques
   }
 };
 
-export const del = async <T = any>(url: string, config?: AxiosRequestConfig): Promise<T> => {
+export const del = async <T = any>(url: string, config?: any): Promise<T> => {
   try {
-    const response: AxiosResponse<T> = await api.delete(url, config);
+    const response = await api.delete<T>(url, config);
     return response.data;
   } catch (error) {
     console.error('DELETE Error:', error);
@@ -100,7 +98,7 @@ export const uploadFile = async <T = any>(url: string, file: File, fieldName = '
     const formData = new FormData();
     formData.append(fieldName, file);
     
-    const response: AxiosResponse<T> = await api.post(url, formData, {
+    const response = await api.post<T>(url, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },

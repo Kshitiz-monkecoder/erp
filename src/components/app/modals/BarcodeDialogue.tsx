@@ -1,5 +1,5 @@
 // src/components/app/modals/BarcodeDialog.tsx
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Plus, Minus, ChevronDown } from "lucide-react";
+import { ArrowLeft, Plus, Minus } from "lucide-react";
 import { post } from "@/lib/apiService";
 
 interface BarcodeRow {
@@ -233,8 +233,8 @@ export default function BarcodeDialog({ open, onOpenChange, grnId = null, items 
     }
   };
 
-  const mainRow = rows.find(r => r.isMain);
-  const childRows = mainRow ? rows.filter(r => r.parentId === mainRow.id) : [];
+  // const mainRow = rows.find(r => r.isMain);
+  // const childRows = mainRow ? rows.filter(r => r.parentId === mainRow.id) : [];
   const displayRows = rows; // keep order as is (mains then splits)
 
   return (

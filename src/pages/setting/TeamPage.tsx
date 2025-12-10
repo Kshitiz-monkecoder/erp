@@ -34,13 +34,29 @@ const TeamsPage: React.FC = () => {
 
   const columns: ColumnDef<TeamResponse>[] = [
     {
-      header: "Team",
-      accessorKey: "name",
+    header: "Team",
+    accessorKey: "name",
+  },
+  {
+    header: "Description",
+    accessorKey: "description",
+  },
+  {
+    header: "Permissions",
+    accessorKey: "permissions",
+    cell: ({ row }) => {
+      const permissions = row.original.permissions;
+      if (!permissions) return <span className="text-gray-400">-</span>;
+      
+      const moduleCount = Object.keys(permissions).length;
+      return (
+        <div className="flex items-center gap-1">
+          <span className="text-sm text-gray-700">{moduleCount} module{moduleCount !== 1 ? 's' : ''}</span>
+          <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+        </div>
+      );
     },
-    {
-      header: "Description",
-      accessorKey: "description",
-    },
+  },
     {
       header: "Users",
       accessorKey: "usersCount",

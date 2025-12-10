@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import * as XLSX from 'xlsx';
-import { bomAPI, BOMResponse } from "@/services/bomService";
+import { bomAPI } from "@/services/bomService";
 
 // Define proper TypeScript interfaces
 interface BOMDetailsType {

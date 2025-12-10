@@ -91,7 +91,7 @@ export const userService = {
   // TEAMS - Correct endpoints
   // -------------------------------
   createTeam: async (data: TeamRequest): Promise<APIResponse<TeamResponse>> =>
-    await post("/teams", data),
+    await post("/team", data),
 
   getAllTeams: async (): Promise<APIResponse<TeamResponse[]>> =>
     await get("/teams"),
@@ -118,8 +118,8 @@ export const userService = {
   // -------------------------------
   // USERS
   // -------------------------------
-  getAllUsers: async (): Promise<APIResponse<UserResponse[]>> =>
-    await get("/users?page=1&limit=10"),
+  getAllUsers: async (page: number = 1, limit: number = 10): Promise<APIResponse<any>> =>
+    await get(`/users?page=${page}&limit=${limit}`),
 
   createUser: async (data: CreateUserRequest): Promise<APIResponse<UserResponse>> =>
     await post("/users", data),
