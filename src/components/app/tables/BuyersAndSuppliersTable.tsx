@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -11,7 +11,6 @@ import {
   getSortedRowModel,
   getPaginationRowModel,
   RowData,
-  // SortingState,
   useReactTable,
 } from "@tanstack/react-table";
 import { ArrowUpRight, PlusIcon } from "lucide-react";
@@ -23,23 +22,31 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-// import DatePicker from "../DatePicker";
 import { Button } from "../../ui/button";
 import { Link, useNavigate } from "react-router";
 import TableLoading from "../TableLoading";
 import TablePagenation from "../TablePagenation";
 import FilterInput from "../FilterInput";
+import { toast } from "sonner";
+import { get } from "@/lib/apiService"; 
 
 declare module "@tanstack/react-table" {
-  //allows us to define custom properties for our columns
   interface ColumnMeta<TData extends RowData, TValue> {
     filterVariant?: "text" | "range" | "select";
   }
 }
 
+type Tag = {
+  id: number;
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Item = {
   id: string;
-  tags: string[];
+  tags: Tag[];
   companyName: string;
   companyAddress: string;
   category: string;
@@ -51,7 +58,6 @@ const BuyersAndSuppliersTable = ({
   tab,
   updatedItems,
   isLoading,
-  isEmpty,
 }: {
   tab: string | null;
   updatedItems: Item[];
@@ -62,8 +68,82 @@ const BuyersAndSuppliersTable = ({
   const startDate = searchParams.get("startDate");
   const endDate = searchParams.get("endDate");
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [selectedTag, setSelectedTag] = useState<string>("");
+  const [tagFilteredItems, setTagFilteredItems] = useState<Item[]>(updatedItems);
+  const [loadingTagItems, setLoadingTagItems] = useState(false);
   const navigateTo = useNavigate();
-  console.log("updatedItems", updatedItems, isEmpty);
+
+  useEffect(() => {
+    const fetchTags = async () => {
+      try {
+        const response = await get("/tag"); 
+        
+        if (response.status && Array.isArray(response.data)) {
+          setTags(response.data);
+        } else {
+          toast.error("Failed to load tags");
+        }
+      } catch (error) {
+        console.error("Error fetching tags:", error);
+        toast.error("Error loading tags");
+      } finally {
+      }
+    };
+
+    fetchTags();
+  }, []);
+
+  // Fetch clients when tag is selected
+  useEffect(() => {
+    const fetchClientsByTag = async () => {
+      if (!selectedTag) {
+        setTagFilteredItems(updatedItems);
+        return;
+      }
+
+      try {
+        setLoadingTagItems(true);
+        const response = await get(`/client?tagId=${selectedTag}`);
+        
+        // Handle different response structures
+        let clientsArray: any[] = [];
+        
+        if (Array.isArray(response.data)) {
+          clientsArray = response.data;
+        } else if (response.data && Array.isArray(response.data.list)) {
+          clientsArray = response.data.list;
+        } else if (response.data && typeof response.data === "object") {
+          clientsArray = [response.data];
+        }
+        
+        if (response.status && clientsArray.length > 0) {
+          // Transform the API response to match the Item type
+          const transformedItems = clientsArray.map((client) => ({
+            id: client.id.toString(),
+            tags: client.tags || [],
+            companyName: client.companyName || "",
+            companyAddress: `${client.addressLine1 || ""}, ${client.city || ""}, ${client.state || ""}, ${client.country || ""}`.replace(/, ,/g, ",").replace(/,\s*$/, ""),
+            category: client.clientType || "",
+            contactNumber: client.phoneNo || "",
+            addedDate: new Date(client.createdAt).toLocaleDateString(),
+          }));
+          setTagFilteredItems(transformedItems);
+        } else {
+          toast.error("Failed to load filtered clients");
+          setTagFilteredItems([]);
+        }
+      } catch (error) {
+        console.error("Error fetching clients by tag:", error);
+        toast.error("Error loading filtered clients");
+        setTagFilteredItems([]);
+      } finally {
+        setLoadingTagItems(false);
+      }
+    };
+
+    fetchClientsByTag();
+  }, [selectedTag, updatedItems]);
 
   const columns: ColumnDef<Item>[] = [
     {
@@ -120,26 +200,31 @@ const BuyersAndSuppliersTable = ({
     {
       header: "Tags",
       accessorKey: "tags",
-      cell: ({ row }) => (
-        <div className="font-normal min-w-32">
-          {(row.getValue("tags") as { name: string }[])
-            .map((tag) => tag.name)
-            .join(", ")}
-        </div>
-      ),
+      cell: ({ row }) => {
+        const tags = row.getValue("tags") as Tag[];
+        const tagNames = tags.map(tag => tag.name);
+        return (
+          <div className="font-normal min-w-32">
+            {tagNames.join(", ")}
+          </div>
+        );
+      },
     },
   ];
+
   // performance optimization
   const filteredItems = useMemo(() => {
-    // Start with category filtering
-    let filtered =
-      !tab || tab === "all"
-        ? updatedItems
-        : updatedItems.filter(
-            (item) =>
-              item.category.toLowerCase() === tab.toLowerCase() ||
-              item.category.toLowerCase() === "both",
-          );
+    // Start with tag-filtered items
+    let filtered = tagFilteredItems;
+
+    // Apply category filtering
+    if (tab && tab !== "all") {
+      filtered = filtered.filter(
+        (item) =>
+          item.category.toLowerCase() === tab.toLowerCase() ||
+          item.category.toLowerCase() === "both",
+      );
+    }
 
     // Then apply date filtering if both dates are present
     if (startDate && endDate) {
@@ -157,7 +242,7 @@ const BuyersAndSuppliersTable = ({
     }
 
     return filtered;
-  }, [tab, startDate, endDate, updatedItems]);
+  }, [tab, startDate, endDate, tagFilteredItems]);
 
   const table = useReactTable({
     data: filteredItems,
@@ -181,32 +266,93 @@ const BuyersAndSuppliersTable = ({
     getFacetedMinMaxValues: getFacetedMinMaxValues(), // generate min/max values for range filter
     enableSortingRemoval: false,
   });
-  console.log("table", filteredItems.length);
+
+
+  const clearTagFilter = () => {
+    setSelectedTag("");
+  };
+
   return (
     <div>
       <div className="space-y-6">
         <section className="mt-4 px-5">
-          <div className="flex md:items-center flex-col md:flex-row gap-2 justify-between">
-            <div className="w-full flex justify-start max-w-[13rem]">
-              <div className="w-44">
+          <div className="flex md:items-center flex-col md:flex-row gap-4 justify-between">
+            <div className="w-full flex flex-col sm:flex-row gap-4 justify-start">
+              <div className="w-full sm:w-44">
                 <FilterInput column={table.getColumn("companyName")!} />
               </div>
-            </div>
-            <div className="flex flex-col sm:flex-row gap-3 md:items-center">
-              <div className="flex items-center gap-4"></div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-4"></div>
-                <div className="flex items-center gap-4">
-                  <Link to="/add-company">
-                    <Button className="bg-[#7047EB] font-light text-sm hover:bg-[#7047EB] shadow-none text-white rounded-md px-4 py-2">
-                      <PlusIcon className="" />
-                      Add Company
+              
+              {/* Tag Filter Select */}
+              {/* <div className="w-full sm:w-64">
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-gray-500" />
+                  <Select
+                    value={selectedTag}
+                    onValueChange={handleTagChange}
+                    disabled={loadingTags}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Filter by Tag" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Tags</SelectItem>
+                      {loadingTags ? (
+                        <SelectItem value="loading" disabled>
+                          Loading tags...
+                        </SelectItem>
+                      ) : (
+                        tags.map((tag) => (
+                          <SelectItem key={tag.id} value={tag.id.toString()}>
+                            {tag.name}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {selectedTag && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearTagFilter}
+                      className="h-8 px-2"
+                    >
+                      Clear
                     </Button>
-                  </Link>
+                  )}
                 </div>
+              </div> */}
+            </div>
+            
+            <div className="flex flex-col sm:flex-row gap-3 md:items-center">
+              <div className="flex items-center gap-4">
+                <Link to="/add-company">
+                  <Button className="bg-[#7047EB] font-light text-sm hover:bg-[#7047EB] shadow-none text-white rounded-md px-4 py-2">
+                    <PlusIcon className="mr-2 h-4 w-4" />
+                    Add Company
+                  </Button>
+                </Link>
               </div>
             </div>
           </div>
+          
+          {/* Selected Tag Info */}
+          {selectedTag && (
+            <div className="mt-4 p-3 bg-blue-50 rounded-md border border-blue-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-blue-800">
+                    Showing clients with tag:
+                  </span>
+                  <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded">
+                    {tags.find(tag => tag.id.toString() === selectedTag)?.name || selectedTag}
+                  </span>
+                </div>
+                {loadingTagItems && (
+                  <span className="text-sm text-blue-600">Loading...</span>
+                )}
+              </div>
+            </div>
+          )}
         </section>
 
         <div className="px-5">
@@ -231,7 +377,7 @@ const BuyersAndSuppliersTable = ({
               ))}
             </TableHeader>
 
-            {isLoading ? (
+            {(isLoading || loadingTagItems) ? (
               <TableLoading columnLength={columns.length} />
             ) : (
               <TableBody>
@@ -240,7 +386,6 @@ const BuyersAndSuppliersTable = ({
                     <TableRow
                       key={row.id}
                       data-state={row.getIsSelected() && "selected"}
-                      // change this slug here in future accordingly
                       className="border"
                     >
                       {row.getVisibleCells().map((cell) => (
@@ -263,8 +408,20 @@ const BuyersAndSuppliersTable = ({
                         <img src="/folder.svg" alt="" />
                         <h4 className="font-bold text-lg">No Results Found</h4>
                         <p className="max-w-xs text-[#121217] text-sm">
-                          Please shorten the search string to see more results.
+                          {selectedTag 
+                            ? "No clients found with the selected tag. Try a different tag or clear the filter."
+                            : "Please shorten the search string to see more results."
+                          }
                         </p>
+                        {selectedTag && (
+                          <Button
+                            variant="outline"
+                            onClick={clearTagFilter}
+                            className="mt-2"
+                          >
+                            Clear Tag Filter
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -280,4 +437,5 @@ const BuyersAndSuppliersTable = ({
     </div>
   );
 };
+
 export default BuyersAndSuppliersTable;

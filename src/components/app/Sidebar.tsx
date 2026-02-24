@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useRef, useEffect } from "react";
-import { Menu, ChevronDown, ChevronUp, LogOut } from "lucide-react";
+import { Menu, ChevronDown,  LogOut } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import {
@@ -10,7 +10,9 @@ import {
   ProductionSubLinks,
   settingSubLinks,
 } from "@/lib/subnavLinks";
-import {get} from "../../lib/apiService"; // Adjust the import path as necessary
+import { get } from "../../lib/apiService";
+import { usePermissions } from "../../contexts/PermissionContext";
+
 interface SidebarProps {
   isOpen: boolean;
   setIsOpen: (arg: boolean | ((prev: boolean) => boolean)) => void;
@@ -21,7 +23,8 @@ interface IMenuLink {
   icon: string;
   name: string;
   link: string;
-  nestedLinks?: Omit<IMenuLink, "icon">[];
+  nestedLinks?: any[];
+  module: string;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -34,50 +37,60 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [activeNestedMenu, setActiveNestedMenu] = useState<string>("");
   const navigateTo = useNavigate();
   const searchParams = new URLSearchParams(window.location.search);
-  const tab = searchParams.get("tab"); // extracting tab vlaue here to higlight current nested value
+  const tab = searchParams.get("tab");
+  
+  const { isModuleAccessible } = usePermissions();
 
+  // Define menu links with exact module mapping
   const menuLinks: IMenuLink[] = [
     {
       icon: "/sidebar/dashboard.svg",
       name: "Dashboard",
       nestedLinks: [],
       link: "/",
+      module: "Dashboard",
     },
     {
       icon: "/sidebar/clipboard.svg",
       name: "Sales & Purchase",
-      nestedLinks: [...SalesAndPurchaseSubLinks],
+      nestedLinks: SalesAndPurchaseSubLinks,
       link: "/sales-purchase",
+      module: "Sales & Purchase",
     },
     {
       icon: "/sidebar/inventory.svg",
       name: "Inventory",
-      nestedLinks: [...InventorySubLinks],
+      nestedLinks: InventorySubLinks,
       link: "/inventory",
+      module: "Inventory",
     },
     {
       icon: "/sidebar/production.svg",
       name: "Production",
-      nestedLinks: [...ProductionSubLinks],
+      nestedLinks: ProductionSubLinks,
       link: "/production",
+      module: "Production",
     },
     {
       icon: "/sidebar/buyer.svg",
       name: "Buyers and Suppliers",
-      nestedLinks: [...BuyersAndSuppliersSubLinks],
+      nestedLinks: BuyersAndSuppliersSubLinks,
       link: "/buyers-suppliers",
+      module: "Buyers and Suppliers",
     },
     {
       icon: "/sidebar/location.svg",
       name: "Addresses",
       nestedLinks: [],
       link: "/addresses",
+      module: "Buyers and Suppliers", // Addresses is part of Buyers and Suppliers module
     },
     {
       icon: "/sidebar/settings.svg",
       name: "Settings",
-      nestedLinks: [...settingSubLinks],
+      nestedLinks: settingSubLinks,
       link: "#",
+      module: "Settings",
     },
   ];
 
@@ -112,7 +125,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const handleLogout = async () => {
     try {
-      const res = await get("/logout")
+      const res = await get("/logout");
       if (!res.status) {
         console.warn("Logout request failed:", await res.text());
       }
@@ -120,9 +133,47 @@ const Sidebar: React.FC<SidebarProps> = ({
       console.error("Network error while logging out:", err);
     } finally {
       localStorage.removeItem("token");
+      localStorage.removeItem("User");
+      localStorage.removeItem("userPermissions");
       navigateTo("/login");
     }
   };
+
+  // Check if any settings item is accessible
+  const isSettingsAccessible = React.useMemo(() => {
+    // First check if Settings module itself is accessible
+    if (isModuleAccessible("Settings")) {
+      return true;
+    }
+    
+    // Then check individual settings items
+    return settingSubLinks.some(link => {
+      if (link.name === "User Management") {
+        return isModuleAccessible("User Management");
+      }
+      if (link.name === "Teams") {
+        return isModuleAccessible("Teams Management");
+      }
+      if (link.name === "My Permissions") {
+        return true; // Always accessible for logged in users
+      }
+      return false;
+    });
+  }, [isModuleAccessible]);
+
+  // Filter menu links based on permissions
+  const filteredMenuLinks = menuLinks.filter((menu) => {
+    // If no module specified, show it
+    if (!menu.module) return true;
+    
+    // For Settings, use the special check
+    if (menu.name === "Settings") {
+      return isSettingsAccessible;
+    }
+    
+    // Check if module is accessible
+    return isModuleAccessible(menu.module as any);
+  });
 
   return (
     <>
@@ -154,13 +205,13 @@ const Sidebar: React.FC<SidebarProps> = ({
           <ChevronDown className="text-white w-5 ml-2" />
         </div>
         <div className="p-2 flex flex-col gap-1">
-          {menuLinks.map((menu, _) => {
+          {filteredMenuLinks.map((menu, index) => {
             return (
               <div
                 className="font-light text-white cursor-pointer"
-                key={menu.link}
+                key={`${menu.link}-${index}`}
               >
-                {(menu.nestedLinks?.length ?? 0 > 0) ? (
+                {menu.nestedLinks && menu.nestedLinks.length > 0 ? (
                   <div className="flex flex-col">
                     <div
                       className="flex items-center gap-2 hover:bg-white/8 duration-200 ease-out transition-all rounded-md p-2"
@@ -169,42 +220,50 @@ const Sidebar: React.FC<SidebarProps> = ({
                       <img src={menu.icon} alt={menu.name} className="w-6" />
                       <div className="flex text-sm w-full justify-between items-center">
                         {menu.name}
-                        {(menu.nestedLinks?.length ?? 0) > 0 && (
-                          <>
-                            {showNestedLinks &&
-                            activeNestedMenu === menu.name ? (
-                              <ChevronUp className="text-white w-5" />
-                            ) : (
-                              <ChevronDown className="text-white w-5" />
-                            )}
-                          </>
-                        )}
+                        <ChevronDown
+                          className={`text-white w-5 transition-transform duration-200 ${
+                            showNestedLinks && activeNestedMenu === menu.name
+                              ? "rotate-180"
+                              : ""
+                          }`}
+                        />
                       </div>
                     </div>
                     {showNestedLinks && activeNestedMenu === menu.name && (
-  <div className="flex flex-col text-sm gap-1 mt-1">
-    {menu.nestedLinks?.map((nestedLink: any) => {
-      return (
-        <Link
-          key={nestedLink.link || nestedLink.name} // ADD THIS KEY PROP
-          to={nestedLink.link}
-          className={clsx(
-            "px-4 text-white/70 hover:text-white py-2 pl-10 hover:bg-white/8 duration-200 ease-out transition-all rounded-md p-2",
-            {
-              "bg-white/8":
-                tab ===
-                new URLSearchParams(
-                  nestedLink.link.split("?")[1],
-                ).get("tab"),
-            },
-          )}
-        >
-          {nestedLink.name}
-        </Link>
-      );
-    })}
-  </div>
-)}
+                      <div className="flex flex-col text-sm gap-1 mt-1">
+                        {menu.nestedLinks.map((nestedLink: any, nestedIndex: number) => {
+                          // Filter nested links based on permissions
+                          if (menu.name === "Settings") {
+                            if (nestedLink.name === "User Management" && 
+                                !isModuleAccessible("User Management")) {
+                              return null;
+                            }
+                            if (nestedLink.name === "Teams" && 
+                                !isModuleAccessible("Teams Management")) {
+                              return null;
+                            }
+                            // My Permissions is always accessible
+                          }
+                          
+                          // For other modules, show all nested links if parent module is accessible
+                          return (
+                            <Link
+                              key={`${nestedLink.link}-${nestedIndex}`}
+                              to={nestedLink.link}
+                              className={clsx(
+                                "px-4 text-white/70 hover:text-white py-2 pl-10 hover:bg-white/8 duration-200 ease-out transition-all rounded-md",
+                                {
+                                  "bg-white/8 text-white":
+                                    tab === new URLSearchParams(nestedLink.link.split("?")[1]).get("tab"),
+                                }
+                              )}
+                            >
+                              {nestedLink.name}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <Link
@@ -213,7 +272,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                       "flex items-center gap-2 text-white font-light p-2 hover:bg-white/8 duration-200 ease-out transition-all rounded-md",
                       {
                         "bg-white/8": menu.link === window.location.pathname,
-                      },
+                      }
                     )}
                   >
                     <img src={menu.icon} alt={menu.name} className="w-6" />

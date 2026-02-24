@@ -1,16 +1,15 @@
 // src/services/productionService.ts
 import { get, post, put, del } from './apiService';
 
-// -------------------- TYPES --------------------
-
-// API Response type
+// ─────────────────────────────────────────────────────────────────────────────
+// Common
+// ─────────────────────────────────────────────────────────────────────────────
 export interface APIResponse<T> {
   status: boolean;
   message: string;
   data: T;
 }
 
-// Store Interface
 export interface Store {
   id: number;
   name: string;
@@ -20,7 +19,6 @@ export interface Store {
   postalCode?: string;
 }
 
-// User Interface
 export interface User {
   id: number;
   email: string;
@@ -29,7 +27,9 @@ export interface User {
   userType?: string;
 }
 
-// Production Item (Finished Good)
+// ─────────────────────────────────────────────────────────────────────────────
+// Production list / detail types
+// ─────────────────────────────────────────────────────────────────────────────
 export interface ProductionItem {
   id: number;
   itemId: number;
@@ -41,7 +41,6 @@ export interface ProductionItem {
   targetQuantity: number;
 }
 
-// Raw Material Item
 export interface RawMaterialItem {
   id: number;
   itemId: number;
@@ -54,7 +53,6 @@ export interface RawMaterialItem {
   balance: number;
 }
 
-// Routing Step
 export interface RoutingStep {
   id: number;
   routingId: number;
@@ -66,7 +64,6 @@ export interface RoutingStep {
   completedAt?: string;
 }
 
-// Scrap Item
 export interface ScrapItem {
   id: number;
   itemId: number;
@@ -76,7 +73,6 @@ export interface ScrapItem {
   costAllocation: number;
 }
 
-// Other Charge
 export interface OtherCharge {
   id: number;
   classification: string;
@@ -84,7 +80,6 @@ export interface OtherCharge {
   comment?: string;
 }
 
-// Production Log
 export interface ProductionLog {
   id: number;
   action: string;
@@ -93,11 +88,10 @@ export interface ProductionLog {
   createdBy: User;
 }
 
-// Production Process (Main Interface)
 export interface ProductionProcess {
   id: number;
   docNumber: string;
-  status: "planned" | "publish" | "completed" | "cancelled";
+  status: 'planned' | 'publish' | 'in_progress' | 'complete' | 'cancelled';
   orderDeliveryDate: string | null;
   expectedCompletionDate: string | null;
   createdAt: string;
@@ -113,9 +107,9 @@ export interface ProductionProcess {
   scrapItems: ScrapItem[];
   otherCharges: OtherCharge[];
   logs: ProductionLog[];
+  bom?: { id: number; docNumber: string };
 }
 
-// Minimal Production Process (for list view)
 export interface MinimalProductionProcess {
   id: number;
   docNumber: string;
@@ -129,7 +123,6 @@ export interface MinimalProductionProcess {
   createdBy: User;
 }
 
-// Create Production from BOM Request - UPDATED
 export interface CreateProductionRequest {
   bomId: number;
   quantity: number;
@@ -144,14 +137,12 @@ export interface CreateProductionRequest {
   documentSeries?: string;
 }
 
-// Update Production Request
 export interface UpdateProductionRequest {
   orderDeliveryDate?: string;
   expectedCompletionDate?: string;
-  status?: "planned" | "publish" | "completed" | "cancelled";
+  status?: 'planned' | 'publish' | 'in_progress' | 'complete' | 'cancelled';
 }
 
-// Production List Query Parameters
 export interface ProductionListQuery {
   page?: number;
   limit?: number;
@@ -159,7 +150,6 @@ export interface ProductionListQuery {
   search?: string;
 }
 
-// Production List Response
 export interface ProductionListResponse {
   data: MinimalProductionProcess[];
   total: number;
@@ -168,75 +158,170 @@ export interface ProductionListResponse {
   totalPages: number;
 }
 
-// -------------------- API FUNCTIONS --------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// Take Action — payload types
+// ─────────────────────────────────────────────────────────────────────────────
 
+/** Selected store shape expected by take-action API */
+export interface SelectedStore {
+  name: string;
+  id: string;
+}
+
+/** Keyed by production FG record id (string) */
+export interface FGActionItem {
+  change_quantity: number;
+  comment: string;
+}
+
+/** Keyed by production RM record id (string) */
+export interface RMActionItem {
+  change_quantity: number;
+  comment: string;
+  /** "issue" | "return" | "line_reject" */
+  change_type: 'issue' | 'return' | 'line_reject';
+  selected_store: SelectedStore;
+}
+
+/** Keyed by production Scrap record id (string) */
+export interface ScrapActionItem {
+  change_quantity: number;
+  comment: string;
+}
+
+/** Element in the other_charges_data array */
+export interface OtherChargeActionItem {
+  charges: number;
+  comment: string;
+  classification: string;
+  charges_estimate: number;
+  charges_actual: number;
+  index: number;
+}
+
+/** Element in the routing_data array */
+export interface RoutingActionItem {
+  comment: string;
+  /** Production routing record ID */
+  id: string;
+  is_done: boolean;
+  order: number;
+  quantity_completed: number;
+  routing_desc: string;
+  /** Routing template ID */
+  routing_id: string;
+  routing_name: string;
+  routing_number: string;
+  change_in_quantity: number;
+  completion_percent: string;
+  final_quantity: number;
+  index: number;
+  mark_done: boolean;
+  previous_quantity: number;
+}
+
+export interface TakeActionFormData {
+  /** Record<productionFGId, FGActionItem> — only items with change_quantity > 0 */
+  fg_data: Record<string, FGActionItem>;
+  /** Record<productionRMId, RMActionItem> — only items with change_quantity > 0 */
+  rm_data: Record<string, RMActionItem>;
+  /** Record<productionScrapId, ScrapActionItem> — only items with change_quantity > 0 */
+  scrap_data: Record<string, ScrapActionItem>;
+  other_charges_data: OtherChargeActionItem[];
+  routing_data: RoutingActionItem[];
+  mark_items_tested: boolean;
+}
+
+export interface TakeActionPayload {
+  form_data: TakeActionFormData;
+  /** String version of production id */
+  process_id: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FG Test — payload types
+// ─────────────────────────────────────────────────────────────────────────────
+export interface FGTestPayload {
+  tested: number;
+  passed: number;
+  rejected: number;
+  send_for_repair: number;
+  comment: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// productionAPI
+// ─────────────────────────────────────────────────────────────────────────────
 export const productionAPI = {
+  // ── BOM ──
+  getBOMByFinishedGoodItem: async (itemId: number): Promise<any> =>
+    get(`/production/bom/finished-goods-item/${itemId}`),
 
-  // 📌 Fetch BOM list for a selected Item (Finished Goods)
-    getBOMByFinishedGoodItem: async (itemId: number): Promise<any> => {
-    return await get(`/production/bom/finished-goods-item/${itemId}`);
-  },
+  // ── CRUD ──
+  createProductionFromBOM: async (data: CreateProductionRequest): Promise<APIResponse<ProductionProcess>> =>
+    post('/production/proccess', data),
 
-  // 📍 1️⃣ Create Production from BOM
-  createProductionFromBOM: async (data: CreateProductionRequest): Promise<APIResponse<ProductionProcess>> => {
-    return await post("/production/proccess", data);
-  },
-
-  // 📍 2️⃣ Get All Production Orders
   getAllProductionOrders: async (query: ProductionListQuery = {}): Promise<APIResponse<ProductionListResponse>> => {
     const { page = 1, limit = 20, status, search } = query;
-    
     let url = `/production/proccess?page=${page}&limit=${limit}`;
     if (status) url += `&status=${status}`;
     if (search) url += `&search=${encodeURIComponent(search)}`;
-    
-    return await get(url);
+    return get(url);
   },
 
-  // 📍 3️⃣ Get Production By ID (Full Detail)
-  getProductionById: async (id: number): Promise<APIResponse<ProductionProcess>> => {
-    return await get(`/production/proccess/${id}`);
-  },
+  getProductionById: async (id: number): Promise<APIResponse<ProductionProcess>> =>
+    get(`/production/proccess/${id}`),
 
-  // 📍 4️⃣ Update Production (Only Production Fields)
-  updateProduction: async (id: number, data: UpdateProductionRequest): Promise<APIResponse<ProductionProcess>> => {
-    return await put(`/production/proccess/${id}`, data);
-  },
+  updateProduction: async (id: number, data: UpdateProductionRequest): Promise<APIResponse<ProductionProcess>> =>
+    put(`/production/proccess/${id}`, data),
 
-  // 📍 5️⃣ Delete Production Order
-  deleteProduction: async (id: number): Promise<APIResponse<{ message: string }>> => {
-    return await del(`/production/proccess/${id}`);
-  },
+  deleteProduction: async (id: number): Promise<APIResponse<{ message: string }>> =>
+    del(`/production/proccess/${id}`),
 
-  // Additional utility functions
+  // ── Status transitions ──
+  getProductionByStatus: async (status: string, page = 1, limit = 20): Promise<APIResponse<ProductionListResponse>> =>
+    get(`/production/proccess?status=${status}&page=${page}&limit=${limit}`),
 
-  // Get production orders by status
-  getProductionByStatus: async (status: string, page = 1, limit = 20): Promise<APIResponse<ProductionListResponse>> => {
-    return await get(`/production/proccess?status=${status}&page=${page}&limit=${limit}`);
-  },
+  searchProduction: async (term: string, page = 1, limit = 20): Promise<APIResponse<ProductionListResponse>> =>
+    get(`/production/proccess?search=${encodeURIComponent(term)}&page=${page}&limit=${limit}`),
 
-  // Search production orders
-  searchProduction: async (searchTerm: string, page = 1, limit = 20): Promise<APIResponse<ProductionListResponse>> => {
-    return await get(`/production/proccess?search=${encodeURIComponent(searchTerm)}&page=${page}&limit=${limit}`);
-  },
+  updateProductionStatus: async (
+    id: number,
+    status: 'planned' | 'publish' | 'complete' | 'cancelled',
+  ): Promise<APIResponse<ProductionProcess>> =>
+    put(`/production/proccess/${id}`, { status }),
 
-  // Update production status
-  updateProductionStatus: async (id: number, status: "planned" | "publish" | "completed" | "cancelled"): Promise<APIResponse<ProductionProcess>> => {
-    return await put(`/production/proccess/${id}`, { status });
-  },
+  publishProduction: async (id: number): Promise<APIResponse<ProductionProcess>> =>
+    put(`/production/proccess/${id}`, { status: 'publish' }),
 
-  // Publish production (change status from planned to publish)
-  publishProduction: async (id: number): Promise<APIResponse<ProductionProcess>> => {
-    return await put(`/production/proccess/${id}`, { status: "publish" });
-  },
+  startProduction: async (id: number): Promise<APIResponse<ProductionProcess>> =>
+    put(`/production/proccess/${id}`, { status: 'in_progress' }),
 
-  // Complete production
-  completeProduction: async (id: number): Promise<APIResponse<ProductionProcess>> => {
-    return await put(`/production/proccess/${id}`, { status: "completed" });
-  },
+  completeProduction: async (id: number): Promise<APIResponse<ProductionProcess>> =>
+    put(`/production/proccess/${id}`, { status: 'complete' }),
 
-  // Cancel production
-  cancelProduction: async (id: number): Promise<APIResponse<ProductionProcess>> => {
-    return await put(`/production/proccess/${id}`, { status: "cancelled" });
-  }
+  cancelProduction: async (id: number): Promise<APIResponse<ProductionProcess>> =>
+    put(`/production/proccess/${id}`, { status: 'cancelled' }),
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ TAKE ACTION
+  //    POST /production/proccess/{id}/take-action
+  //    Handles: mark FG produced, issue/return RM, log scrap, log routing, log charges
+  // ─────────────────────────────────────────────────────────────────────────
+  takeAction: async (
+    id: number,
+    payload: TakeActionPayload,
+  ): Promise<APIResponse<any>> =>
+    post(`/production/proccess/${id}/take-action`, payload),
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ FG TEST
+  //    POST /production/proccess/{id}/fg-test
+  //    Marks a finished good as tested/passed/rejected
+  // ─────────────────────────────────────────────────────────────────────────
+  fgTest: async (
+    id: number,
+    payload: FGTestPayload,
+  ): Promise<APIResponse<any>> =>
+    post(`/production/proccess/${id}/fg-test`, payload),
 };

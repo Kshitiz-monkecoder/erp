@@ -5,7 +5,18 @@ import { userService, UserResponse } from "../../services/userService";
 import AddUserModal from "@/components/app/AddUserModal";
 import EditUserModal from "@/components/app/EditUserModal";
 import ErrorToast from "@/components/app/toasts/ErrorToast";
-import { Edit, Trash2, Users } from "lucide-react";
+import SuccessToast from "@/components/app/toasts/SuccessToast";
+import { Edit, Trash2, Users, AlertTriangle, Loader2 } from "lucide-react";
+import { useAuth } from "../../contexts/AuthContext";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 interface UsersApiResponse {
   records: UserResponse[];
@@ -22,16 +33,16 @@ const UserManagement: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<UserResponse | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
   const [selectedUser, setSelectedUser] = useState<UserResponse | null>(null);
-  const [pagination, setPagination] = useState({
-    page: 1,
-    limit: 10,
-    total: 0,
-    totalPages: 0,
-  });
+  
+  // Get current user from auth context
+  const { user: currentUser, loading: authLoading } = useAuth();
 
   const fetchUsers = async (page: number = 1, limit: number = 10) => {
     setIsLoading(true);
@@ -42,14 +53,8 @@ const UserManagement: React.FC = () => {
         
         setUsers(apiData.records);
         setTotalItems(apiData.pagination.total);
-        setPageIndex(apiData.pagination.page - 1); // Convert to zero-based
+        setPageIndex(apiData.pagination.page - 1);
         setPageSize(apiData.pagination.limit);
-        setPagination({
-          page: apiData.pagination.page,
-          limit: apiData.pagination.limit,
-          total: apiData.pagination.total,
-          totalPages: apiData.pagination.totalPages,
-        });
       }
     } catch (error) {
       ErrorToast({ title: "Error", description: "Failed to load users" });
@@ -60,36 +65,91 @@ const UserManagement: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    // Only fetch users when auth is loaded
+    if (!authLoading) {
+      fetchUsers();
+    }
+  }, [authLoading]);
 
   const handleEditUser = (user: UserResponse) => {
     setSelectedUser(user);
     setShowEditModal(true);
   };
 
-  const handleDeleteUser = async (id: number) => {
-    if (window.confirm("Are you sure you want to delete this user?")) {
-      try {
-        await userService.deleteUser(id);
-        fetchUsers(pageIndex + 1, pageSize); // pageIndex is zero-based
-        // Show success message
-        // SuccessToast({ title: "Success", description: "User deleted successfully" });
-      } catch {
-        ErrorToast({ title: "Error", description: "Failed to delete user" });
+  const confirmDeleteUser = (user: UserResponse) => {
+    // Check if user is trying to delete themselves
+    if (currentUser && currentUser.id === user.id) {
+      ErrorToast({ 
+        title: "Cannot Delete", 
+        description: "You cannot delete your own account." 
+      });
+      return;
+    }
+    
+    setUserToDelete(user);
+    setShowDeleteDialog(true);
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    
+    setIsDeleting(true);
+    try {
+      const response = await userService.deleteUser(userToDelete.id);
+      
+      if (response.status) {
+        SuccessToast({ 
+          title: "Success", 
+          description: `User "${userToDelete.name}" deleted successfully` 
+        });
+        fetchUsers(pageIndex + 1, pageSize);
+      } else {
+        ErrorToast({ 
+          title: "Error", 
+          description: response.message || "Failed to delete user" 
+        });
       }
+    } catch (error: any) {
+      console.error("Delete error:", error);
+      ErrorToast({ 
+        title: "Error", 
+        description: error.message || "Failed to delete user" 
+      });
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteDialog(false);
+      setUserToDelete(null);
     }
   };
 
   const handlePageChange = (page: number) => {
-    fetchUsers(page + 1, pageSize); // Convert to one-based for API
+    fetchUsers(page + 1, pageSize);
+  };
+
+  // Add a helper function to check if user is current user
+  const isCurrentUser = (userId: number): boolean => {
+    return currentUser ? currentUser.id === userId : false;
   };
 
   const columns: ColumnDef<UserResponse>[] = [
     { 
       header: "Name", 
       accessorKey: "name",
-      cell: ({ row }) => <span className="font-medium">{row.getValue("name") || "N/A"}</span>
+      cell: ({ row }) => {
+        const user = row.original;
+        const isOwnAccount = isCurrentUser(user.id);
+        
+        return (
+          <div className="flex items-center gap-2">
+            <span className="font-medium">{user.name || "N/A"}</span>
+            {isOwnAccount && (
+              <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                You
+              </span>
+            )}
+          </div>
+        );
+      }
     },
     { 
       header: "Email", 
@@ -134,26 +194,49 @@ const UserManagement: React.FC = () => {
     {
       header: "Actions",
       accessorKey: "actions",
-      cell: ({ row }) => (
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleEditUser(row.original)}
-            className="p-1 text-blue-600 rounded hover:bg-blue-50"
-            title="Edit user"
-          >
-            <Edit className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => handleDeleteUser(row.original.id)}
-            className="p-1 text-red-600 rounded hover:bg-red-50"
-            title="Delete user"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      ),
+      cell: ({ row }) => {
+        const user = row.original;
+        const isOwnAccount = isCurrentUser(user.id);
+        
+        return (
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleEditUser(user)}
+              className={`p-1 rounded hover:bg-blue-50 ${
+                isOwnAccount ? "text-gray-400 cursor-not-allowed" : "text-blue-600"
+              }`}
+              title={isOwnAccount ? "Cannot edit your own account" : "Edit user"}
+              disabled={isOwnAccount}
+            >
+              <Edit className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => !isOwnAccount && confirmDeleteUser(user)}
+              className={`p-1 rounded hover:bg-red-50 ${
+                isOwnAccount ? "text-gray-400 cursor-not-allowed" : "text-red-600"
+              }`}
+              title={isOwnAccount ? "Cannot delete your own account" : "Delete user"}
+              disabled={isOwnAccount}
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        );
+      },
     },
   ];
+
+  // Show loading while auth is loading
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-4" />
+          <p className="text-gray-600">Loading user data...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">
@@ -236,6 +319,65 @@ const UserManagement: React.FC = () => {
           user={selectedUser}
         />
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-12 h-12 bg-red-100 rounded-full">
+                <AlertTriangle className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <DialogTitle className="text-lg font-semibold">
+                  Delete User
+                </DialogTitle>
+                <DialogDescription className="text-gray-600">
+                  This action cannot be undone.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          
+          <div className="py-4">
+            <p className="text-gray-700">
+              Are you sure you want to delete the user{" "}
+              <span className="font-semibold text-gray-900">
+                "{userToDelete?.name}"
+              </span>
+              ? This will permanently remove the user account and all associated data.
+            </p>
+          </div>
+          
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowDeleteDialog(false)}
+              disabled={isDeleting}
+              className="w-full sm:w-auto"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleDeleteUser}
+              disabled={isDeleting}
+              className="w-full sm:w-auto"
+            >
+              {isDeleting ? (
+                <>
+                  <span className="mr-2">Deleting...</span>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                </>
+              ) : (
+                "Delete User"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

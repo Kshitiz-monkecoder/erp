@@ -14,12 +14,13 @@ import {
   SelectValue,
   SelectGroup,
 } from "@/components/ui/select";
+
 import CustomFieldsModal from "@/components/app/modals/CustomFieldsModal";
 import CustomFieldsTableModals from "@/components/app/modals/CustomFieldsTableModal";
 import AddCompanyTagsModal from "@/components/app/modals/AddCompanyTagsModal";
 import DynamicFieldsRenderer from "@/components/app/custom/DynamicBuilder";
-import SuccessToast from "@/components/app/toasts/SuccessToast";
 import ErrorToast from "@/components/app/toasts/ErrorToast";
+
 import { useNavigate } from "react-router";
 import { get, post } from "@/lib/apiService";
 
@@ -34,7 +35,6 @@ export type TagType = {
 const AddCompany: React.FC = () => {
   const navigate = useNavigate();
 
-  // Form data state
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -57,7 +57,6 @@ const AddCompany: React.FC = () => {
     customFields: [],
   });
 
-  // Validation errors state
   const [errors, setErrors] = useState({
     name: "",
     email: "",
@@ -70,144 +69,167 @@ const AddCompany: React.FC = () => {
     city: "",
     state: "",
     country: "",
+    gstNumber: "",
   });
 
   const [activeTab, setActiveTab] = useState("personDetails");
   const [states, setStates] = useState<any[]>([]);
   const [countries, setCountries] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [showCustomFieldsModal, setShowCustomFieldsModal] = useState<boolean>(false);
-  const [showCustomFieldsTableModal, setShowCustomFieldsTableModal] = useState<boolean>(false);
-  const [showCompanyTagsModal, setShowCompanyTagsModal] = useState<boolean>(false);
+  const [showCustomFieldsModal, setShowCustomFieldsModal] = useState(false);
+  const [showCustomFieldsTableModal, setShowCustomFieldsTableModal] =
+    useState(false);
+  const [showCompanyTagsModal, setShowCompanyTagsModal] = useState(false);
   const [defaultSelectTags, setDefaultSelectTags] = useState<TagType[]>([]);
   const [dynamicFields, setDynamicFields] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
   const [gstVerificationStatus, setGstVerificationStatus] = useState({
     message: "",
     type: "",
   });
 
-  // Helper function for email validation
-  const isValidEmail = (email: string) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  };
+  const gstTypes: string[] = [
+    "regular",
+    "composition",
+    "unregistered",
+    "consumer",
+    "unknown",
+  ];
 
-  // Validate person details tab
+  // ---------------- GST VALIDATION ----------------
+  const isValidGSTFormat = (gst: string): string | null => {
+    const trimmed = gst.trim().toUpperCase();
+
+    if (!trimmed) return null;
+
+    if (trimmed.length !== 15)
+      return "GST number must be exactly 15 characters";
+
+    const gstRegex =
+      /^[0-3][0-9][A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+
+    if (!gstRegex.test(trimmed))
+      return "Invalid GST format. Example: 27AABCU9603R1Z5";
+
+    return null;
+  };
+  // ------------------------------------------------
+
+  const isValidEmail = (email: string) =>
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
   const validatePersonDetails = () => {
     const newErrors = { ...errors };
-    let isValid = true;
+    let ok = true;
 
-    // Name validation
     if (!formData.name.trim()) {
       newErrors.name = "Full name is required";
-      isValid = false;
-    } else {
-      newErrors.name = "";
-    }
+      ok = false;
+    } else newErrors.name = "";
 
-    // Email validation
     if (!formData.email.trim()) {
       newErrors.email = "Email is required";
-      isValid = false;
+      ok = false;
     } else if (!isValidEmail(formData.email)) {
-      newErrors.email = "Please enter a valid email address";
-      isValid = false;
-    } else {
-      newErrors.email = "";
-    }
+      newErrors.email = "Invalid email";
+      ok = false;
+    } else newErrors.email = "";
 
-    // Phone number validation
-    if (!formData.phoneNo) {
-      newErrors.phoneNo = "Mobile number is required";
-      isValid = false;
-    } else if (formData.phoneNo.length !== 10) {
+    if (!formData.phoneNo || formData.phoneNo.length !== 10) {
       newErrors.phoneNo = "Mobile number must be 10 digits";
-      isValid = false;
-    } else {
-      newErrors.phoneNo = "";
-    }
+      ok = false;
+    } else newErrors.phoneNo = "";
 
     if (!formData.clientType) {
       newErrors.clientType = "Client type is required";
-      isValid = false;
-    } else {
-      newErrors.clientType = "";
-    }
+      ok = false;
+    } else newErrors.clientType = "";
 
     setErrors(newErrors);
-    return isValid;
+    return ok;
   };
 
-  // Validate company details tab
   const validateCompanyDetails = () => {
     const newErrors = { ...errors };
-    let isValid = true;
+    let ok = true;
 
-    // Company name validation
     if (!formData.companyName.trim()) {
       newErrors.companyName = "Company name is required";
-      isValid = false;
-    } else {
-      newErrors.companyName = "";
-    }
+      ok = false;
+    } else newErrors.companyName = "";
 
-    // Company email validation
     if (!formData.companyEmail.trim()) {
       newErrors.companyEmail = "Company email is required";
-      isValid = false;
+      ok = false;
     } else if (!isValidEmail(formData.companyEmail)) {
-      newErrors.companyEmail = "Please enter a valid email address";
-      isValid = false;
-    } else {
-      newErrors.companyEmail = "";
-    }
+      newErrors.companyEmail = "Invalid company email";
+      ok = false;
+    } else newErrors.companyEmail = "";
 
-    // Address line 1 validation
     if (!formData.addressLine1.trim()) {
       newErrors.addressLine1 = "Address line 1 is required";
-      isValid = false;
-    } else {
-      newErrors.addressLine1 = "";
-    }
+      ok = false;
+    } else newErrors.addressLine1 = "";
 
-    // Pincode validation
     if (!formData.pincode.trim()) {
       newErrors.pincode = "Pincode is required";
-      isValid = false;
-    } else {
-      newErrors.pincode = "";
-    }
+      ok = false;
+    } else newErrors.pincode = "";
 
-    // City validation
     if (!formData.city.trim()) {
       newErrors.city = "City is required";
-      isValid = false;
-    } else {
-      newErrors.city = "";
-    }
+      ok = false;
+    } else newErrors.city = "";
 
-    // State validation
     if (!formData.state) {
       newErrors.state = "State is required";
-      isValid = false;
-    } else {
-      newErrors.state = "";
-    }
+      ok = false;
+    } else newErrors.state = "";
 
-    // Country validation
     if (!formData.country) {
       newErrors.country = "Country is required";
-      isValid = false;
-    } else {
-      newErrors.country = "";
-    }
+      ok = false;
+    } else newErrors.country = "";
 
     setErrors(newErrors);
-    return isValid;
+    return ok;
   };
 
-  // Handler to select default tag
+  // ---------------- GST LIVE VALIDATION ----------------
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+
+    setFormData((prev) => ({ ...prev, [name]: value }));
+
+    if (name === "gstNumber") {
+      const gstError = isValidGSTFormat(value);
+      setErrors((prev) => ({ ...prev, gstNumber: gstError || "" }));
+    } else {
+      setErrors((prev) => ({ ...prev, [name]: "" }));
+    }
+  };
+  // ----------------------------------------------------
+
+  const toggleCustomFieldsModal = () =>
+    setShowCustomFieldsModal((prev) => !prev);
+  const toggleCustomFieldsTableModal = () =>
+    setShowCustomFieldsTableModal((prev) => !prev);
+  const toggleCompanyTagsModal = () =>
+    setShowCompanyTagsModal((prev) => !prev);
+
+  const handleSaveFields = (items: any) => {
+    setFormData((prev: any) => ({
+      ...prev,
+      customFields: items,
+    }));
+    setShowCustomFieldsTableModal(false);
+  };
+
+  const handleCustomFieldSave = (newField: any) => {
+    console.log("New field received:", newField);
+  };
+
   const handleSelectDefaultTag = (value: string) => {
     const id = Number(value);
     setFormData((prev) => {
@@ -221,35 +243,6 @@ const AddCompany: React.FC = () => {
     });
   };
 
-  // Fetch states and countries using API service
-  useEffect(() => {
-    const fetchStatesAndCountries = async () => {
-      try {
-        // Fetch states
-        const statesResponse = await get("/state/1");
-        setStates(statesResponse.data);
-      } catch (error) {
-        console.error("Error fetching states:", error);
-      }
-
-      try {
-        // Fetch countries
-        const countriesResponse = await get("/countrie");
-        setCountries(countriesResponse.data);
-      } catch (error) {
-        console.error("Error fetching countries:", error);
-      }
-    };
-    fetchStatesAndCountries();
-  }, []);
-
-  useEffect(() => {
-    if (error) {
-      const timer = setTimeout(() => setError(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [error]);
-
   const handleRemoveDefaultTag = (id: number) => {
     setFormData((prev) => {
       const tag = defaultSelectTags.find((t) => t.id === id);
@@ -261,85 +254,55 @@ const AddCompany: React.FC = () => {
     });
   };
 
-  const handleCustomFieldSave = (newField: any) => {
-    console.log("New field received:", newField);
-  };
-
-  const handleSaveFields = (items: any) => {
-    setFormData((prev: any) => ({
-      ...prev,
-      customFields: items,
-    }));
-
-    console.log("Custom fields saved:", items);
-    setShowCustomFieldsTableModal(false);
-  };
-
-  const handleChange = (e: any) => {
-    const { name, value } = e.target;
-    const numericFields = [""];
-
-    setFormData((prev) => ({
-      ...prev,
-      [name]: numericFields.includes(name) ? Number(value) : value,
-    }));
-
-    // Clear validation error when user types
-    if (errors[name as keyof typeof errors]) {
-      setErrors((prev) => ({
-        ...prev,
-        [name]: "",
-      }));
-    }
-  };
-
-  const toggleCustomFieldsModal = () => setShowCustomFieldsModal((prev) => !prev);
-
-  const toggleCustomFieldsTableModal = () => {
-    setShowCustomFieldsTableModal((prev) => !prev);
-  };
-
-  const toggleCompanyTagsModal = () => setShowCompanyTagsModal((prev) => !prev);
-
+  // ---------- SINGLE HANDLE SAVE FUNCTION -------------
   const handleSaveAndNext = async () => {
     if (activeTab === "personDetails") {
-      if (validatePersonDetails()) {
-        setActiveTab("companyDetails");
-      }
-    } else if (activeTab === "companyDetails") {
-      if (validateCompanyDetails()) {
-        setActiveTab("otherDetails");
-      }
-    } else {
-      // Submit form using API service
-      setIsSubmitting(true);
-      try {
-        console.log("Form data:", formData);
-        await post("/client", formData);
+      if (validatePersonDetails()) setActiveTab("companyDetails");
+      return;
+    }
 
-        SuccessToast({
-          title: "Company added successfully.",
-          description: "",
-        });
-        navigate("/buyers-suppliers?tab=all");
-      } catch (error: any) {
-        const errorMessage = error.message || "An error occurred";
-        ErrorToast({
-          title: "Error:",
-          description: errorMessage,
-        });
-        setError(errorMessage);
-        console.error("Error submitting form:", error);
-      } finally {
-        setIsSubmitting(false);
+    if (activeTab === "companyDetails") {
+      const ok = validateCompanyDetails();
+
+      const gstError = isValidGSTFormat(formData.gstNumber);
+      setErrors((prev) => ({ ...prev, gstNumber: gstError || "" }));
+
+      if (gstError) {
+        ErrorToast({ title: "GST Error", description: gstError });
+        return;
       }
+
+      if (ok) setActiveTab("otherDetails");
+      return;
+    }
+
+    const gstError = isValidGSTFormat(formData.gstNumber);
+    if (gstError) {
+      setErrors((prev) => ({ ...prev, gstNumber: gstError }));
+      ErrorToast({ title: "GST Error", description: gstError });
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await post("/client", formData);
+      // SuccessToast({ title: "Company added successfully." });
+      navigate("/buyers-suppliers?tab=all");
+    } catch (err: any) {
+      ErrorToast({
+        title: "Error",
+        description: err?.message || "Something went wrong",
+      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
+  // ----------------------------------------------------
 
-  const handleGetDetails = async (gstNumber: string, gstApiSecret: string) => {
-    console.log(gstApiSecret, gstNumber);
-
-    // Clear previous status messages
+  const handleGetDetails = async (
+    gstNumber: string,
+    gstApiSecret: string,
+  ) => {
     setGstVerificationStatus({ message: "", type: "" });
 
     if (!gstNumber) {
@@ -356,28 +319,28 @@ const AddCompany: React.FC = () => {
         type: "pending",
       });
 
-      // Note: GST verification API is external, so keeping fetch for this specific case
       const response = await fetch(
         `https://appyflow.in/api/verifyGST/?gstNo=${gstNumber}&key_secret=${gstApiSecret}`,
       );
       const data = await response.json();
-      console.log("GST Details:", data);
 
       if (data.taxpayerInfo) {
         const taxpayerInfo = data.taxpayerInfo;
         const address = taxpayerInfo.pradr?.addr || {};
-        console.log(taxpayerInfo.dty);
-        console.log(address);
 
         setFormData((prev) => ({
           ...prev,
           gstVerified: true,
-          gstType: taxpayerInfo.dty ? taxpayerInfo.dty.toLowerCase() : prev.gstType,
+          gstType: taxpayerInfo.dty
+            ? taxpayerInfo.dty.toLowerCase()
+            : prev.gstType,
           companyName: taxpayerInfo.tradeNam || prev.companyName,
           addressLine1:
-            address.bno + " " + address.flno + " " + address.loc || prev.addressLine1,
+            address.bno + " " + address.flno + " " + address.loc ||
+            prev.addressLine1,
           addressLine2:
-            [address.st, address.dst].filter(Boolean).join(", ") || prev.addressLine2,
+            [address.st, address.dst].filter(Boolean).join(", ") ||
+            prev.addressLine2,
           pincode: address.pncd || prev.pincode,
           city: address.city || taxpayerInfo.ctj || prev.city,
           state: address.stcd || prev.state,
@@ -392,48 +355,49 @@ const AddCompany: React.FC = () => {
           message: data.message || "Invalid GST number or verification failed",
           type: "error",
         });
-        console.error("Error fetching GST details:", data.message || "Invalid response");
       }
-    } catch (error) {
+    } catch {
       setGstVerificationStatus({
         message: "Failed to verify GST. Please try again later.",
         type: "error",
       });
-      console.error("Error fetching GST details:", error);
     }
   };
 
-  const gstTypes: string[] = [
-    "regular",
-    "composition",
-    "unregistered",
-    "consumer",
-    "unknown",
-  ];
+  const renderErrorMessage = (msg: string) =>
+    msg ? <div className="text-red-500 text-xs mt-1">{msg}</div> : null;
 
-  // Fetch tags using API service
+  useEffect(() => {
+    const fetchStatesAndCountries = async () => {
+      try {
+        const statesResponse = await get("/state/1");
+        setStates(statesResponse.data);
+      } catch {}
+
+      try {
+        const countriesResponse = await get("/countrie");
+        setCountries(countriesResponse.data);
+      } catch {}
+    };
+    fetchStatesAndCountries();
+  }, []);
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
   useEffect(() => {
     const fetchTags = async () => {
       try {
-        const responseData = await get("/tag");
-        console.log("Tags data:", responseData);
-        const tags = responseData.data;
-        console.log("Tags:", tags);
-        setDefaultSelectTags(tags);
-      } catch (err) {
-        console.error("Error fetching tags:", err);
-      }
+        const res = await get("/tag");
+        setDefaultSelectTags(res.data);
+      } catch {}
     };
-
     fetchTags();
   }, [showCompanyTagsModal]);
-
-  // Helper function to render error message
-  const renderErrorMessage = (errorMsg: string) => {
-    return errorMsg ? (
-      <div className="text-red-500 text-xs mt-1">{errorMsg}</div>
-    ) : null;
-  };
 
 
   return (
@@ -620,34 +584,44 @@ const AddCompany: React.FC = () => {
                     <div className="flex flex-col gap-4 w-full">
                       <div className="flex  gap-5">
                         <div className="space-y-1 w-full">
-                          <Label className={labelClasses}>GST Number</Label>
-                          <div className="relative">
-                            <Input
-                              name="gstNumber"
-                              value={formData.gstNumber}
-                              onChange={handleChange}
-                              type="text"
-                              className={`${inputClasses} required bg-white border-neutral-200 pe-9`}
-                              placeholder="GST number"
-                            />
-                            <div
-                              className="text-muted-foreground/80 p-2 hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 absolute inset-y-0 end-0 flex h-full items-center justify-center rounded-e-md transition-[color,box-shadow] outline-none focus:z-10 focus-visible:ring-[3px] disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
-                              aria-label="Subscribe"
-                            >
-                              <Button
-                                onClick={() => {
-                                  handleGetDetails(
-                                    formData.gstNumber,
-                                    import.meta.env.VITE_GST_API_SECRET,
-                                  );
-                                }}
-                                className="h-[1.78rem] text-xs"
-                              >
-                                Get Details
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
+  <Label className={labelClasses}>GST Number</Label>
+  <div className="relative">
+    <Input
+      name="gstNumber"
+      value={formData.gstNumber}
+      onChange={handleChange}
+      type="text"
+      maxLength={15}
+      className={`${inputClasses} bg-white border-neutral-200 pe-9 ${
+        errors.gstNumber ? "border-red-500" : ""
+      }`}
+      placeholder="e.g. 27AABCU9603R1Z5"
+      onInput={(e: React.ChangeEvent<HTMLInputElement>) => {
+        e.currentTarget.value = e.currentTarget.value.toUpperCase();
+      }}
+    />
+    <div className="absolute inset-y-0 end-0 flex h-full items-center justify-center">
+      <Button
+        onClick={() => {
+          const gstError = isValidGSTFormat(formData.gstNumber);
+          if (gstError) {
+            ErrorToast({
+              title: "Invalid GST Format",
+              description: gstError,
+            });
+            return;
+          }
+          handleGetDetails(formData.gstNumber, import.meta.env.VITE_GST_API_SECRET);
+        }}
+        className="h-[1.78rem] text-xs mx-2"
+        disabled={!!errors.gstNumber || !formData.gstNumber}
+      >
+        Get Details
+      </Button>
+    </div>
+  </div>
+  {renderErrorMessage(errors.gstNumber)}
+</div>
                         <div className="space-y-1 w-full md:max-w-36">
                           <Label className={labelClasses}>GST Type</Label>
                           <Select

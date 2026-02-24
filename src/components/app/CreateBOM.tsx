@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,8 +25,21 @@ import {
   Search,
   Loader2,
   Save,
+  Link2,
+  MoreHorizontal,
+  ExternalLink,
+  X,
 } from "lucide-react";
-import { bomAPI } from "../../services/bomService";
+import {
+  bomAPI,
+  type BOMCreateRequest,
+  type BOMItemRequest,
+  type FinishedGoodRequest,
+  type RawMaterialRequest,
+  type RoutingRequest,
+  type ScrapRequest,
+  type OtherChargeRequest,
+} from "../../services/bomService";
 import { routingAPI, type Routing } from "../../services/routingService";
 import {
   Dialog,
@@ -36,23 +49,17 @@ import {
   DialogTrigger,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { get } from "@/lib/apiService";
 
-// Data Types
+// ─────────────────────────────────────────────
+// Local UI Types
+// ─────────────────────────────────────────────
 interface Item {
   id: string;
   name: string;
   sku: string;
-  unit?: {
-    name: string;
-    description: string;
-    uom: string;
-    id: number;
-  };
-  category?: {
-    name: string;
-    id: number;
-    description: string;
-  };
+  unit?: { name: string; description: string; uom: string; id: number };
+  category?: { name: string; id: number; description: string };
   currentStock: string;
   defaultPrice: string;
   hsnCode: string;
@@ -65,7 +72,48 @@ interface Warehouse {
   name: string;
 }
 
-interface FinishedGood {
+// Rows shown in the child BOM dialog top table (FG)
+interface ChildBOMFGRow {
+  sku: string;
+  name: string;
+  itemCategory: string;
+  quantity: number;
+  unit: string;
+  costAlloc: number;
+  comment: string;
+}
+
+// Rows shown in the child BOM dialog bottom table (RM) + displayed as sub-rows in main table
+interface ChildBOMRMRow {
+  sku: string;
+  name: string;
+  category: string;
+  quantity: number;
+  unit: string;
+  comment: string;
+}
+
+interface LinkedChildBOM {
+  bomId: number;
+  bomNumber: string;
+  bomName: string;
+  finishedGoods: ChildBOMFGRow[];
+  rawMaterials: ChildBOMRMRow[];
+}
+
+interface UIRawMaterial {
+  itemId: string;
+  name: string;
+  category: string;
+  quantity: number;
+  unit: string;
+  comment: string;
+  alternateItems: string;
+  itemData?: Item;
+  childBOM?: LinkedChildBOM | null;
+}
+
+interface UIFinishedGood {
   itemId: string;
   name: string;
   category: string;
@@ -77,18 +125,7 @@ interface FinishedGood {
   itemData?: Item;
 }
 
-interface RawMaterial {
-  itemId: string;
-  name: string;
-  category: string;
-  quantity: number;
-  unit: string;
-  comment: string;
-  alternateItems: string;
-  itemData?: Item;
-}
-
-interface ScrapItem {
+interface UIScrapItem {
   id: string;
   name: string;
   category: string;
@@ -99,45 +136,46 @@ interface ScrapItem {
   itemData?: Item;
 }
 
-interface BOMRouting {
+interface UIBOMRouting {
   routingId: number;
   routingName: string;
   routingNumber: string;
   comment: string;
 }
 
-interface OtherCharge {
+interface UIOtherCharge {
   classification: string;
   account: string;
   amount: number;
   comment: string;
 }
 
-interface BOMLevelData {
+interface BOMSections {
   expanded: {
-    bomSnapshot: boolean;
+    bomSummary: boolean;
     finishedGoods: boolean;
     rawMaterials: boolean;
     routing: boolean;
     scrap: boolean;
     otherCharges: boolean;
   };
-  finishedGoods: FinishedGood[];
-  rawMaterials: RawMaterial[];
-  routing: BOMRouting[];
-  scrapItems: ScrapItem[];
-  otherCharges: OtherCharge[];
+  finishedGoods: UIFinishedGood[];
+  rawMaterials: UIRawMaterial[];
+  routing: UIBOMRouting[];
+  scrapItems: UIScrapItem[];
+  otherCharges: UIOtherCharge[];
 }
 
-// API Helper
-import { get } from "@/lib/apiService";
-
-// Warehouse API
+// ─────────────────────────────────────────────
+// Warehouse API helper
+// ─────────────────────────────────────────────
 const warehouseAPI = {
   getWarehouses: () => get("/inventory/warehouse"),
 };
 
-// Custom Select Component with Search
+// ─────────────────────────────────────────────
+// ItemSelect with Search
+// ─────────────────────────────────────────────
 const ItemSelect: React.FC<{
   value: string;
   onValueChange: (value: string, itemData?: Item) => void;
@@ -146,408 +184,486 @@ const ItemSelect: React.FC<{
   disabled?: boolean;
 }> = ({ value, onValueChange, items, placeholder = "Select item", disabled = false }) => {
   const [search, setSearch] = useState("");
-
-  const filteredItems = items.filter(item =>
-    item.name.toLowerCase().includes(search.toLowerCase()) ||
-    item.sku.toLowerCase().includes(search.toLowerCase())
+  const filtered = items.filter(
+    (i) =>
+      i.name.toLowerCase().includes(search.toLowerCase()) ||
+      i.sku.toLowerCase().includes(search.toLowerCase())
   );
-
-  const selectedItem = items.find(item => item.id === value);
+  const selected = items.find((i) => i.id === value);
 
   return (
-    <div className="relative">
-      <Select
-        value={value}
-        onValueChange={(val) => {
-          const item = items.find(i => i.id === val);
-          onValueChange(val, item);
-        }}
-        disabled={disabled}
-      >
-        <SelectTrigger className="h-9 w-full">
-          <SelectValue placeholder={placeholder}>
-            {selectedItem ? (
-              <div className="flex flex-col">
-                <span className="font-medium">{selectedItem.name}</span>
-                <span className="text-xs text-gray-500">SKU: {selectedItem.sku}</span>
-              </div>
-            ) : (
-              <span className="text-gray-500">{placeholder}</span>
-            )}
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent className="max-h-64">
-          <div className="sticky top-0 bg-white p-2 border-b">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <Input
-                placeholder="Search items..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-8 h-8 text-sm"
-                onClick={(e) => e.stopPropagation()}
-              />
-            </div>
-          </div>
-          {filteredItems.length === 0 ? (
-            <div className="py-6 text-center text-gray-500 text-sm">
-              No items found
-            </div>
+    <Select
+      value={value}
+      onValueChange={(val) => {
+        const item = items.find((i) => i.id === val);
+        onValueChange(val, item);
+      }}
+      disabled={disabled}
+    >
+      <SelectTrigger className="h-9 w-full">
+        <SelectValue placeholder={placeholder}>
+          {selected ? (
+            <span className="font-medium text-sm">{selected.name}</span>
           ) : (
-            filteredItems.map((item) => (
-              <SelectItem key={item.id} value={item.id}>
-                <div className="flex flex-col">
-                  <span className="font-medium">{item.name}</span>
-                  <span className="text-xs text-gray-500">
-                    SKU: {item.sku} | Category: {item.category?.name || "N/A"} | Stock: {item.currentStock}
-                  </span>
-                </div>
-              </SelectItem>
-            ))
+            <span className="text-gray-400 text-sm">{placeholder}</span>
           )}
-        </SelectContent>
-      </Select>
-    </div>
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent className="max-h-64 z-[100]">
+        <div className="sticky top-0 bg-white p-2 border-b">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              placeholder="Search items..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8 h-8 text-sm"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+        {filtered.length === 0 ? (
+          <div className="py-6 text-center text-gray-500 text-sm">No items found</div>
+        ) : (
+          filtered.map((item) => (
+            <SelectItem key={item.id} value={item.id}>
+              <div className="flex flex-col">
+                <span className="font-medium">{item.name}</span>
+                <span className="text-xs text-gray-500">
+                  SKU: {item.sku} | {item.category?.name ?? "N/A"} | Stock: {item.currentStock}
+                </span>
+              </div>
+            </SelectItem>
+          ))
+        )}
+      </SelectContent>
+    </Select>
   );
 };
 
-
-// Routing Dialog Component
-// Routing Dialog Component
-const RoutingDialog: React.FC<{
-  onSelect: (routing: Routing, comment: string) => void;
-  levelIndex: number;
-}> = ({ onSelect, levelIndex }) => {
-  const [routings, setRoutings] = useState<Routing[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedRouting, setSelectedRouting] = useState<Routing | null>(null);
-  const [comment, setComment] = useState("");
+// ─────────────────────────────────────────────
+// Raw Material Actions Menu (fixed position, no overflow clipping)
+// Label changes: "Link Child BOM" / "Change Child Link"
+// ─────────────────────────────────────────────
+const RawMaterialActionsMenu: React.FC<{
+  onLinkChildBOM: () => void;
+  onRemove: () => void;
+  hasChildBOM: boolean;
+}> = ({ onLinkChildBOM, onRemove, hasChildBOM }) => {
   const [open, setOpen] = useState(false);
-  const [hasFetched, setHasFetched] = useState(false); // Track if data has been fetched
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-  // New routing form state
-  const [showNewForm, setShowNewForm] = useState(false);
-  const [newRouting, setNewRouting] = useState({
-    number: "",
-    name: "",
-    desc: ""
-  });
-  const [creating, setCreating] = useState(false);
-
-  // 🚀 Fetch routings when dialog opens
-  const fetchRoutings = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      console.log("Fetching routings...");
-
-      const response = await routingAPI.getAllRoutings();
-      console.log("Routing API response:", response);
-
-      if (response?.status && Array.isArray(response.data)) {
-        console.log("Routings loaded:", response.data.length);
-        setRoutings(response.data);
-        setHasFetched(true);
-      } else {
-        console.error("Invalid routing data format:", response);
-        setError("Invalid routing data format received from server");
-      }
-    } catch (err) {
-      console.error("Error fetching routings:", err);
-      setError(`Error loading routings: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setLoading(false);
+  const handleToggle = () => {
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setMenuPos({ top: rect.bottom + 4, left: rect.right - 208 });
     }
+    setOpen((v) => !v);
   };
 
-  // Reset state when dialog opens/closes
   useEffect(() => {
-    if (open && !hasFetched) {
-      fetchRoutings();
-    }
-    
-    // Reset when dialog closes
-    if (!open) {
-      setSelectedRouting(null);
-      setComment("");
-      setShowNewForm(false);
-      setNewRouting({ number: "", name: "", desc: "" });
-    }
-  }, [open, hasFetched]);
-
-  // Create new routing
-  const handleCreateRouting = async () => {
-    if (!newRouting.number || !newRouting.name) {
-      alert("Please fill in required fields");
-      return;
-    }
-
-    try {
-      setCreating(true);
-      console.log("Creating new routing:", newRouting);
-
-      const response = await routingAPI.createRouting(newRouting);
-      console.log("Create routing response:", response);
-
-      if (response?.status) {
-        // Add the new routing to the list
-        const newRoutingData = response.data;
-        setRoutings((prev) => [...prev, newRoutingData]);
-        setSelectedRouting(newRoutingData);
-        setNewRouting({ number: "", name: "", desc: "" });
-        setShowNewForm(false);
-        
-        alert("Routing created successfully!");
-      } else {
-        console.error("Failed to create routing:", response);
-        alert("Failed to create routing. Please try again.");
-      }
-    } catch (err) {
-      console.error("Error creating routing:", err);
-      alert(`Error creating routing: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleSelect = () => {
-    if (!selectedRouting) {
-      alert("Please select a routing");
-      return;
-    }
-    console.log("Selected routing:", selectedRouting, "with comment:", comment);
-    onSelect(selectedRouting, comment);
-    setOpen(false); // Close the dialog after selection
-  };
-
-  // For debugging: Log routings when they change
-  useEffect(() => {
-    if (routings.length > 0) {
-      console.log("Current routings state:", routings);
-    }
-  }, [routings]);
+    const handler = (e: MouseEvent) => {
+      if (
+        menuRef.current && !menuRef.current.contains(e.target as Node) &&
+        btnRef.current && !btnRef.current.contains(e.target as Node)
+      ) setOpen(false);
+    };
+    if (open) document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => {
-      setOpen(isOpen);
-      if (isOpen && !hasFetched) {
-        fetchRoutings();
-      }
-    }}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="lg">
-          <Plus className="h-5 w-5 mr-2" /> Add Routing / Work Center
-        </Button>
-      </DialogTrigger>
+    <>
+      <button
+        ref={btnRef}
+        onClick={handleToggle}
+        title="Row actions"
+        className="h-8 w-8 flex items-center justify-center rounded border border-gray-200 hover:bg-gray-100 text-gray-500"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
 
-      <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Select Routing for Level {levelIndex + 1}</DialogTitle>
-          <DialogDescription>
-            Choose an existing routing or create a new one
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-6">
-          {/* Create New Routing Form */}
-          {showNewForm ? (
-            <div className="border rounded-lg p-6 bg-gray-50">
-              <h3 className="font-semibold mb-4 text-lg">Create New Routing</h3>
-              <div className="space-y-4">
-                <div>
-                  <Label>Routing Number *</Label>
-                  <Input
-                    value={newRouting.number}
-                    onChange={(e) =>
-                      setNewRouting({ ...newRouting, number: e.target.value })
-                    }
-                    placeholder="e.g., Routing #3"
-                    className="mt-1"
-                  />
-                </div>
-                <div>
-                  <Label>Routing Name *</Label>
-                  <Input
-                    value={newRouting.name}
-                    onChange={(e) =>
-                      setNewRouting({ ...newRouting, name: e.target.value })
-                    }
-                    placeholder="e.g., R3"
-                    className="mt-1"
-                  />
-                </div>
-                <div>
-                  <Label>Description</Label>
-                  <Textarea
-                    value={newRouting.desc}
-                    onChange={(e) =>
-                      setNewRouting({ ...newRouting, desc: e.target.value })
-                    }
-                    placeholder="Description"
-                    className="mt-1"
-                    rows={3}
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    onClick={handleCreateRouting}
-                    disabled={creating}
-                    className="flex-1"
-                  >
-                    {creating ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4 mr-2" />
-                    )}
-                    Create Routing
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowNewForm(false)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <Button
-              onClick={() => {
-                setShowNewForm(true);
-                setSelectedRouting(null); // Clear selection when creating new
-              }}
-              variant="outline"
-              className="w-full"
-            >
-              <Plus className="h-4 w-4 mr-2" /> Create New Routing
-            </Button>
-          )}
-
-          {/* Existing Routings List */}
-          <div className="border rounded-lg overflow-hidden">
-            <div className="bg-gray-50 p-4 border-b">
-              <div className="flex justify-between items-center">
-                <h3 className="font-semibold">Existing Routings</h3>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={fetchRoutings}
-                  disabled={loading}
-                  className="h-8 w-8 p-0"
-                  title="Refresh routings"
-                >
-                  <Loader2 className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                </Button>
-              </div>
-            </div>
-
-            {loading ? (
-              <div className="p-8 text-center">
-                <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-600" />
-                <p className="mt-2 text-gray-600">Loading routings...</p>
-              </div>
-            ) : error ? (
-              <div className="p-8 text-center">
-                <div className="text-red-600 mb-2">{error}</div>
-                <Button
-                  onClick={fetchRoutings}
-                  variant="outline"
-                  className="mt-2"
-                >
-                  Retry Loading
-                </Button>
-              </div>
-            ) : routings.length === 0 ? (
-              <div className="p-8 text-center">
-                <div className="text-gray-500 mb-2">No routings found</div>
-                <Button
-                  onClick={() => setShowNewForm(true)}
-                  variant="outline"
-                  className="mt-2"
-                >
-                  <Plus className="h-4 w-4 mr-2" /> Create First Routing
-                </Button>
-              </div>
-            ) : (
-              <div className="max-h-64 overflow-y-auto">
-                {routings.map((routing) => (
-                  <div
-                    key={routing.id}
-                    className={`p-4 border-b hover:bg-gray-50 cursor-pointer transition-colors ${
-                      selectedRouting?.id === routing.id
-                        ? "bg-blue-50 border-blue-200"
-                        : ""
-                    }`}
-                    onClick={() => {
-                      setSelectedRouting(routing);
-                      setShowNewForm(false); // Hide new form if showing
-                    }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-5 h-5 rounded-full border flex items-center justify-center ${
-                          selectedRouting?.id === routing.id
-                            ? "bg-blue-600 border-blue-600"
-                            : "border-gray-300"
-                        }`}
-                      >
-                        {selectedRouting?.id === routing.id && (
-                          <div className="w-2 h-2 bg-white rounded-full" />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex justify-between items-center">
-                          <h4 className="font-semibold text-gray-900">{routing.number}</h4>
-                          <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                            ID: {routing.id}
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-600 mt-1">
-                          <span className="font-medium">Name:</span>{" "}
-                          {routing.name}
-                        </p>
-                        {routing.desc && (
-                          <p className="text-sm text-gray-500 mt-1 line-clamp-2">
-                            {routing.desc}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+      {open && (
+        <div
+          ref={menuRef}
+          style={{ position: "fixed", top: menuPos.top, left: menuPos.left, zIndex: 9999 }}
+          className="w-52 bg-white border border-gray-200 rounded-lg shadow-xl py-1"
+        >
+          <button
+            onClick={() => { setOpen(false); onLinkChildBOM(); }}
+            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-blue-50 text-left text-gray-700 transition-colors"
+          >
+            <Link2 className="h-4 w-4 text-blue-600 shrink-0" />
+            <span className="flex-1">
+              {/* ✅ requirement 3: label changes based on state */}
+              {hasChildBOM ? "Change Child Link" : "Link Child BOM"}
+            </span>
+            {hasChildBOM && (
+              <span className="bg-green-100 text-green-700 text-xs px-1.5 py-0.5 rounded font-medium shrink-0">
+                Linked
+              </span>
             )}
+          </button>
+          <div className="border-t border-gray-100 my-0.5" />
+          <button
+            onClick={() => { setOpen(false); onRemove(); }}
+            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-red-50 text-red-600 text-left transition-colors"
+          >
+            <X className="h-4 w-4 shrink-0" />
+            <span>Remove Row</span>
+          </button>
+        </div>
+      )}
+    </>
+  );
+};
+
+// ─────────────────────────────────────────────
+// Link Child BOM Dialog
+// ✅ requirement 1: fetches real BOM list, populates both tables on selection
+// ─────────────────────────────────────────────
+
+// Matches actual API list item shape
+interface APIBOMListItem {
+  id: number;
+  docNumber: string;
+  docName: string;
+  bomItems: Array<{
+    finishedGoods: {
+      quantity: number;
+      costAlloc: number;
+      comment: string;
+      item: { sku: string; name: string; id: number };
+      unit: { name: string };
+    };
+    rawMaterials: Array<{
+      quantity: number;
+      costAlloc: number;
+      comment: string;
+      item: { sku: string; name: string; id: number };
+      unit: { name: string };
+    }>;
+  }>;
+}
+
+const LinkChildBOMDialog: React.FC<{
+  open: boolean;
+  onClose: () => void;
+  onSave: (childBOM: LinkedChildBOM) => void;
+  currentChildBOM?: LinkedChildBOM | null;
+}> = ({ open, onClose, onSave, currentChildBOM }) => {
+  const navigate = useNavigate();
+
+  const [bomList, setBomList] = useState<APIBOMListItem[]>([]);
+  const [loadingList, setLoadingList] = useState(false);
+
+  const [selectedBOMId, setSelectedBOMId] = useState<string>("");
+
+  // Top table rows (FG of selected BOM)
+  const [fgRows, setFgRows] = useState<ChildBOMFGRow[]>([]);
+  // Bottom table rows (RM of selected BOM)
+  const [rmRows, setRmRows] = useState<ChildBOMRMRow[]>([]);
+
+  // Bottom table search
+  const [idSearch, setIdSearch] = useState("");
+  const [nameSearch, setNameSearch] = useState("");
+
+  // Reset + fetch when dialog opens
+  useEffect(() => {
+    if (open) {
+      const existingId = currentChildBOM?.bomId?.toString() ?? "";
+      setSelectedBOMId(existingId);
+      setFgRows(currentChildBOM?.finishedGoods ?? []);
+      setRmRows(currentChildBOM?.rawMaterials ?? []);
+      setIdSearch("");
+      setNameSearch("");
+      fetchBOMList();
+    }
+  }, [open]);
+
+  // ── Fetch published BOM list ──
+  const fetchBOMList = async () => {
+    setLoadingList(true);
+    try {
+      // Uses same endpoint as bomAPI but with query params for published BOMs
+      const res = await get("/production/bom?page=1&limit=100&status=published");
+      if (res?.status && Array.isArray(res.data)) {
+        setBomList(res.data as APIBOMListItem[]);
+      } else {
+        setBomList([]);
+      }
+    } catch {
+      setBomList([]);
+    } finally {
+      setLoadingList(false);
+    }
+  };
+
+  // ── When a BOM is chosen from dropdown → populate both tables ──
+  const handleSelectBOM = async (bomId: string) => {
+    setSelectedBOMId(bomId);
+    if (!bomId) { setFgRows([]); setRmRows([]); return; }
+
+    // First try to find in the already-fetched list (no extra API call needed)
+    const found = bomList.find((b) => b.id.toString() === bomId);
+
+    if (found) {
+      populateTablesFromBOM(found);
+    } else {
+      // Fallback: fetch by ID
+      try {
+        const res = await get(`/production/bom/${bomId}`);
+        if (res?.status && res.data) {
+          populateTablesFromBOM(res.data as APIBOMListItem);
+        }
+      } catch {
+        setFgRows([]);
+        setRmRows([]);
+      }
+    }
+  };
+
+  // ── Maps API response → table rows ──
+  const populateTablesFromBOM = (bom: APIBOMListItem) => {
+    // Top table: Finished Goods — one row per bomItem's finishedGoods
+    const fgs: ChildBOMFGRow[] = (bom.bomItems ?? []).map((bi) => ({
+      sku: bi.finishedGoods?.item?.sku ?? "-",
+      name: bi.finishedGoods?.item?.name ?? "-",
+      itemCategory: "-", // API doesn't return category
+      quantity: bi.finishedGoods?.quantity ?? 0,
+      unit: bi.finishedGoods?.unit?.name ?? "-",
+      costAlloc: bi.finishedGoods?.costAlloc ?? 0,
+      comment: bi.finishedGoods?.comment || "-",
+    }));
+
+    // Bottom table: Raw Materials — flattened across all bomItems
+    const rms: ChildBOMRMRow[] = (bom.bomItems ?? []).flatMap((bi) =>
+      (bi.rawMaterials ?? []).map((rm) => ({
+        sku: rm.item?.sku ?? "-",
+        name: rm.item?.name ?? "-",
+        category: "-",
+        quantity: rm.quantity ?? 0,
+        unit: rm.unit?.name ?? "-",
+        comment: rm.comment || "-",
+      }))
+    );
+
+    setFgRows(fgs);
+    setRmRows(rms);
+  };
+
+  // Filtered bottom-table rows
+  const filteredRM = rmRows.filter(
+    (r) =>
+      r.sku.toLowerCase().includes(idSearch.toLowerCase()) &&
+      r.name.toLowerCase().includes(nameSearch.toLowerCase())
+  );
+
+  const selectedBOM = bomList.find((b) => b.id.toString() === selectedBOMId);
+
+  const handleSave = () => {
+    if (!selectedBOMId || !selectedBOM) { alert("Please select a BOM to link"); return; }
+    onSave({
+      bomId: selectedBOM.id,
+      bomNumber: selectedBOM.docNumber,
+      bomName: selectedBOM.docName,
+      finishedGoods: fgRows,
+      rawMaterials: rmRows,
+    });
+    onClose();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-0">
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b bg-white sticky top-0 z-10">
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <h2 className="text-base font-semibold text-gray-800">Link Child BOM</h2>
+        </div>
+
+        <div className="p-6 space-y-4">
+
+          {/* ── Top Table: Finished Goods of selected BOM ── */}
+          <div className="border rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  {["#", "ID", "NAME", "ITEM CATEGORY", "QUANTITY", "UNIT", "COST ALLOCATION (%)", "COMMENT"].map((h) => (
+                    <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {fgRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-8 text-center text-gray-400 text-sm">
+                      No data available
+                    </td>
+                  </tr>
+                ) : (
+                  fgRows.map((row, i) => (
+                    <tr key={i} className="border-t hover:bg-gray-50">
+                      <td className="px-4 py-2.5 text-gray-400 text-xs">{i + 1}</td>
+                      <td className="px-4 py-2.5 text-blue-600 font-medium text-xs">{row.sku}</td>
+                      <td className="px-4 py-2.5 text-blue-600 text-xs">{row.name}</td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs">{row.itemCategory}</td>
+                      <td className="px-4 py-2.5 text-right font-medium text-xs">{row.quantity}</td>
+                      <td className="px-4 py-2.5 text-gray-600 text-xs">{row.unit}</td>
+                      <td className="px-4 py-2.5 text-right font-medium text-xs">{row.costAlloc}</td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs">{row.comment}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
 
-          {/* Comment Input */}
-          {selectedRouting && (
-            <div className="space-y-2">
-              <Label htmlFor="routing-comment">Comment for "{selectedRouting.number}"</Label>
-              <Textarea
-                id="routing-comment"
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                placeholder="Add any comments or notes about this routing..."
-                rows={3}
-              />
-            </div>
-          )}
+          {/* ── Bottom Table: Raw Materials of selected BOM (searchable) ── */}
+          <div className="border rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  {["#", "ID", "NAME", "CATEGORY", "QUANTITY", "UNIT", "COMMENT"].map((h) => (
+                    <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {/* Search row */}
+                <tr className="border-t bg-white">
+                  <td className="px-4 py-2"></td>
+                  <td className="px-4 py-2">
+                    <Input
+                      placeholder="Search..."
+                      value={idSearch}
+                      onChange={(e) => setIdSearch(e.target.value)}
+                      className="h-7 text-xs border-0 border-b border-gray-300 rounded-none px-0 focus-visible:ring-0 shadow-none"
+                    />
+                  </td>
+                  <td className="px-4 py-2">
+                    <Input
+                      placeholder="Search..."
+                      value={nameSearch}
+                      onChange={(e) => setNameSearch(e.target.value)}
+                      className="h-7 text-xs border-0 border-b border-gray-300 rounded-none px-0 focus-visible:ring-0 shadow-none"
+                    />
+                  </td>
+                  <td colSpan={4} className="px-4 py-2"></td>
+                </tr>
 
-          {/* Action Buttons */}
-          <div className="flex justify-end gap-2 pt-4 border-t">
-            <Button 
-              variant="outline" 
-              onClick={() => setOpen(false)}
+                {filteredRM.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-400 text-sm">
+                      No data available
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRM.map((row, i) => (
+                    <tr key={i} className="border-t hover:bg-gray-50">
+                      <td className="px-4 py-2.5 text-gray-400 text-xs">{i + 1}</td>
+                      <td className="px-4 py-2.5 text-blue-600 font-medium text-xs">{row.sku}</td>
+                      <td className="px-4 py-2.5 text-blue-600 text-xs">{row.name}</td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs">{row.category}</td>
+                      <td className="px-4 py-2.5 text-right font-medium text-xs">{row.quantity}</td>
+                      <td className="px-4 py-2.5 text-gray-600 text-xs">{row.unit}</td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs">{row.comment}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* ── BOM Selector — bottom-right, matches image layout ── */}
+          <div className="flex items-center justify-end gap-2">
+            {/* Select BOM combobox — shows docNumber as option label */}
+            <div className="min-w-[260px] relative">
+              <Select value={selectedBOMId} onValueChange={handleSelectBOM}>
+                <SelectTrigger className="h-10 border border-gray-300 rounded-lg">
+                  {loadingList ? (
+                    <div className="flex items-center gap-2 text-gray-400 text-sm">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading BOMs…
+                    </div>
+                  ) : (
+                    <SelectValue placeholder="Select BOM">
+                      {selectedBOM ? selectedBOM.docNumber : "Select BOM"}
+                    </SelectValue>
+                  )}
+                </SelectTrigger>
+                <SelectContent className="z-[200]">
+                  {loadingList ? (
+                    <div className="py-4 text-center">
+                      <Loader2 className="h-4 w-4 animate-spin mx-auto text-blue-500" />
+                    </div>
+                  ) : bomList.length === 0 ? (
+                    <div className="py-4 text-center text-gray-500 text-sm">No published BOMs found</div>
+                  ) : (
+                    bomList.map((bom) => (
+                      <SelectItem key={bom.id} value={bom.id.toString()}>
+                        {/* Show only docNumber, matching Image 1 */}
+                        {bom.docNumber}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+
+              {/* Floating label like Image 2 */}
+              {selectedBOMId && (
+                <span className="absolute -top-2.5 left-3 text-[10px] text-gray-500 bg-white px-1">
+                  Select BOM
+                </span>
+              )}
+            </div>
+
+            {/* Clear (×) button — matching Image 2 */}
+            {selectedBOMId && (
+              <button
+                onClick={() => { setSelectedBOMId(""); setFgRows([]); setRmRows([]); }}
+                className="h-10 w-10 flex items-center justify-center border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-400 hover:text-gray-600"
+                title="Clear selection"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+
+            {/* Open BOM in new tab — matching Image 2 */}
+            {selectedBOMId && (
+              <button
+                onClick={() => window.open(`/production/bom/${selectedBOMId}`, "_blank")}
+                className="h-10 w-10 flex items-center justify-center border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-400 hover:text-gray-600"
+                title="Open BOM"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-6 py-4 border-t bg-gray-50 sticky bottom-0">
+          <Button
+            variant="outline"
+            onClick={() => { onClose(); navigate("/production/bom/create"); }}
+            className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide"
+          >
+            <ExternalLink className="h-4 w-4" />
+            Create BOM
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button
+              onClick={handleSave}
+              disabled={!selectedBOMId}
+              className="bg-[#105076] hover:bg-[#0d4566] text-white font-semibold px-8 uppercase tracking-wide"
             >
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleSelect} 
-              disabled={!selectedRouting}
-              className="bg-[#105076] hover:bg-[#0d4566]"
-            >
-              {selectedRouting ? `Select "${selectedRouting.number}"` : 'Select Routing'}
+              Save
             </Button>
           </div>
         </div>
@@ -556,903 +672,405 @@ const RoutingDialog: React.FC<{
   );
 };
 
-// Scrap Table Row
-const ScrapTableRow: React.FC<{
-  item: ScrapItem;
-  index: number;
-  onUpdate: (index: number, field: keyof ScrapItem, value: any, itemData?: Item) => void;
-  onDelete: () => void;
-  items: Item[];
-}> = ({ item, index, onUpdate, onDelete, items }) => {
-  return (
-    <div className="grid grid-cols-9 border-b hover:bg-gray-50 transition-colors">
-      <div className="px-4 py-3 text-gray-500 text-sm font-medium flex items-center justify-center">{index + 1}</div>
-      <div className="px-4 py-3 flex items-center">
-        <ItemSelect
-          value={item.id}
-          onValueChange={(value, itemData) => onUpdate(index, "id", value, itemData)}
-          items={items}
-          placeholder="Select item"
-        />
-      </div>
-      <div className="px-4 py-3 flex items-center">
-        <Input 
-          value={item.name} 
-          onChange={(e) => onUpdate(index, "name", e.target.value)} 
-          className="h-9 text-sm" 
-          placeholder="Name"
-          readOnly={!!item.itemData}
-        />
-      </div>
-      <div className="px-4 py-3 flex items-center">
-        <Input 
-          value={item.category} 
-          onChange={(e) => onUpdate(index, "category", e.target.value)} 
-          className="h-9 text-sm" 
-          placeholder="Category"
-          readOnly={!!item.itemData}
-        />
-      </div>
-      <div className="px-4 py-3 flex items-center">
-        <Input 
-          type="number" 
-          value={item.quantity} 
-          onChange={(e) => onUpdate(index, "quantity", Number(e.target.value) || 0)} 
-          className="h-9 text-sm" 
-          min="0"
-        />
-      </div>
-      <div className="px-4 py-3 flex items-center">
-        <Input 
-          value={item.unit} 
-          onChange={(e) => onUpdate(index, "unit", e.target.value)} 
-          className="h-9 text-sm" 
-          placeholder="Unit"
-          readOnly={!!item.itemData}
-        />
-      </div>
-      <div className="px-4 py-3 flex items-center">
-        <Input 
-          type="number" 
-          value={item.costAllocation} 
-          onChange={(e) => onUpdate(index, "costAllocation", Number(e.target.value) || 0)} 
-          className="h-9 text-sm" 
-          placeholder="%" 
-          min="0" 
-          max="100"
-        />
-      </div>
-      <div className="px-4 py-3 flex items-center">
-        <Input 
-          value={item.comment} 
-          onChange={(e) => onUpdate(index, "comment", e.target.value)} 
-          className="h-9 text-sm" 
-          placeholder="Comment" 
-        />
-      </div>
-      <div className="px-4 py-3 flex items-center gap-2">
-        <Button variant="ghost" size="icon" onClick={onDelete} className="h-8 w-8 hover:bg-red-50">
-          <Trash2 className="h-4 w-4 text-red-600" />
-        </Button>
-      </div>
-    </div>
-  );
-};
+// ─────────────────────────────────────────────
+// Routing Dialog
+// ─────────────────────────────────────────────
+const RoutingDialog: React.FC<{
+  onSelect: (routing: Routing, comment: string) => void;
+}> = ({ onSelect }) => {
+  const [routings, setRoutings] = useState<Routing[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedRouting, setSelectedRouting] = useState<Routing | null>(null);
+  const [comment, setComment] = useState("");
+  const [open, setOpen] = useState(false);
+  const [hasFetched, setHasFetched] = useState(false);
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [newRouting, setNewRouting] = useState({ number: "", name: "", desc: "" });
+  const [creating, setCreating] = useState(false);
 
-// BOM Level Component
-const BOMLevel: React.FC<{
-  levelIndex: number;
-  data: BOMLevelData;
-  items: Item[];
-  onUpdate: (updated: BOMLevelData) => void;
-  onDelete?: () => void;
-}> = ({ levelIndex, data, items, onUpdate, onDelete }) => {
-  const toggleSection = (section: keyof BOMLevelData["expanded"]) => {
-    onUpdate({
-      ...data,
-      expanded: { ...data.expanded, [section]: !data.expanded[section] },
-    });
-  };
-
-  // Finished Goods
-  const addFinishedGood = () => {
-    onUpdate({
-      ...data,
-      finishedGoods: [
-        ...data.finishedGoods,
-        { itemId: "", name: "", category: "", quantity: 1, unit: "", costAllocation: 0, comment: "", alternateItems: "" },
-      ],
-    });
-  };
-
-  const removeFinishedGood = (idx: number) => {
-    if (data.finishedGoods.length > 1) {
-      onUpdate({ ...data, finishedGoods: data.finishedGoods.filter((_, i) => i !== idx) });
+  const fetchRoutings = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await routingAPI.getAllRoutings();
+      if (response?.status && Array.isArray(response.data)) {
+        setRoutings(response.data);
+        setHasFetched(true);
+      } else {
+        setError("Invalid routing data format");
+      }
+    } catch (err) {
+      setError(`Error: ${err instanceof Error ? err.message : "Unknown"}`);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const updateFinishedGood = (idx: number, field: keyof FinishedGood, value: any, itemData?: Item) => {
-    const updated = [...data.finishedGoods];
-    
-    if (field === "itemId" && itemData) {
-      // When item is selected, auto-fill other fields
-      updated[idx] = {
-        ...updated[idx],
-        itemId: value,
-        name: itemData.name,
-        category: itemData.category?.name || "",
-        unit: itemData.unit?.name || "",
-        itemData: itemData
-      };
-    } else {
-      updated[idx] = { ...updated[idx], [field]: value };
+  useEffect(() => {
+    if (open && !hasFetched) fetchRoutings();
+    if (!open) {
+      setSelectedRouting(null);
+      setComment("");
+      setShowNewForm(false);
+      setNewRouting({ number: "", name: "", desc: "" });
     }
-    
-    onUpdate({ ...data, finishedGoods: updated });
-  };
+  }, [open]);
 
-  // Raw Materials
-  const addRawMaterial = () => {
-    onUpdate({
-      ...data,
-      rawMaterials: [
-        ...data.rawMaterials,
-        { itemId: "", name: "", category: "", quantity: 1, unit: "", comment: "", alternateItems: "" },
-      ],
-    });
-  };
-
-  const removeRawMaterial = (idx: number) => {
-    if (data.rawMaterials.length > 1) {
-      onUpdate({ ...data, rawMaterials: data.rawMaterials.filter((_, i) => i !== idx) });
+  const handleCreate = async () => {
+    if (!newRouting.number || !newRouting.name) { alert("Fill required fields"); return; }
+    try {
+      setCreating(true);
+      const response = await routingAPI.createRouting(newRouting);
+      if (response?.status) {
+        setRoutings((prev) => [...prev, response.data]);
+        setSelectedRouting(response.data);
+        setNewRouting({ number: "", name: "", desc: "" });
+        setShowNewForm(false);
+      } else {
+        alert("Failed to create routing");
+      }
+    } catch (err) {
+      alert(`Error: ${err instanceof Error ? err.message : "Unknown"}`);
+    } finally {
+      setCreating(false);
     }
-  };
-
-  const updateRawMaterial = (idx: number, field: keyof RawMaterial, value: any, itemData?: Item) => {
-    const updated = [...data.rawMaterials];
-    
-    if (field === "itemId" && itemData) {
-      // When item is selected, auto-fill other fields
-      updated[idx] = {
-        ...updated[idx],
-        itemId: value,
-        name: itemData.name,
-        category: itemData.category?.name || "",
-        unit: itemData.unit?.name || "",
-        itemData: itemData
-      };
-    } else {
-      updated[idx] = { ...updated[idx], [field]: value };
-    }
-    
-    onUpdate({ ...data, rawMaterials: updated });
-  };
-
-  // Routing
-  const addRouting = (routing: Routing, comment: string) => {
-    onUpdate({
-      ...data,
-      routing: [
-        ...data.routing,
-        {
-          routingId: routing.id,
-          routingName: routing.name,
-          routingNumber: routing.number,
-          comment: comment
-        }
-      ]
-    });
-  };
-
-  const removeRouting = (idx: number) => {
-    onUpdate({ ...data, routing: data.routing.filter((_, i) => i !== idx) });
-  };
-
-  // Scrap Items
-  const addScrapItem = () => {
-    onUpdate({
-      ...data,
-      scrapItems: [
-        ...data.scrapItems,
-        { id: "", name: "", category: "", quantity: 0, unit: "", costAllocation: 0, comment: "" },
-      ],
-    });
-  };
-
-  const updateScrapItem = (idx: number, field: keyof ScrapItem, value: any, itemData?: Item) => {
-    const updated = [...data.scrapItems];
-    
-    if (field === "id" && itemData) {
-      // When item is selected, auto-fill other fields
-      updated[idx] = {
-        ...updated[idx],
-        id: value,
-        name: itemData.name,
-        category: itemData.category?.name || "",
-        unit: itemData.unit?.name || "",
-        itemData: itemData
-      };
-    } else {
-      updated[idx] = { ...updated[idx], [field]: value };
-    }
-    
-    onUpdate({ ...data, scrapItems: updated });
-  };
-
-  const removeScrapItem = (idx: number) => {
-    onUpdate({ ...data, scrapItems: data.scrapItems.filter((_, i) => i !== idx) });
-  };
-
-  // Other Charges
-  const updateOtherCharge = (idx: number, field: keyof OtherCharge, value: any) => {
-    const updated = [...data.otherCharges];
-    updated[idx] = { ...updated[idx], [field]: value };
-    onUpdate({ ...data, otherCharges: updated });
   };
 
   return (
-    <div className="border-2 border-gray-200 rounded-lg bg-white mt-8 first:mt-0 shadow-sm">
-      {/* Level Header */}
-      <div className="flex items-center justify-between px-6 py-4 bg-[#105076] text-white rounded-t-lg">
-        <h2 className="text-xl font-bold">BOM Level {levelIndex + 1}</h2>
-        {onDelete && (
-          <Button variant="ghost" size="icon" onClick={onDelete} className="hover:bg-white/20">
-            <Trash2 className="h-5 w-5" />
-          </Button>
-        )}
-      </div>
-
-{/* 1. BOM Snapshot - Replaced with Summary Cards */}
-<div className="flex items-center justify-between p-5 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggleSection("bomSnapshot")}>
-  <h3 className="text-lg font-semibold flex items-center gap-2 text-[#105076]">
-    <FileText className="h-5 w-5" /> BOM Summary
-  </h3>
-  {data.expanded.bomSnapshot ? <ChevronUp /> : <ChevronDown />}
-</div>
-{data.expanded.bomSnapshot && (
-  <div className="p-6 border-b bg-gray-50">
-    <div className="grid grid-cols-4 gap-4 mb-6">
-      {/* Raw Materials Card */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center hover:shadow-sm transition-shadow">
-        <div className="text-2xl font-bold text-blue-600">{data.rawMaterials.filter(rm => rm.itemId).length}</div>
-        <div className="text-sm text-blue-800 font-medium">RAW MATERIALS</div>
-        <div className="text-xs text-blue-600 mt-1">
-          {data.rawMaterials.filter(rm => rm.itemId).length > 0 
-            ? `${data.rawMaterials.filter(rm => rm.itemId).length} item(s)` 
-            : "No items added"}
-        </div>
-      </div>
-
-      {/* Routing Card */}
-      <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center hover:shadow-sm transition-shadow">
-        <div className="text-2xl font-bold text-green-600">{data.routing.length}</div>
-        <div className="text-sm text-green-800 font-medium">ROUTING</div>
-        <div className="text-xs text-green-600 mt-1">
-          {data.routing.length > 0 
-            ? `${data.routing.length} step(s)` 
-            : "No routing added"}
-        </div>
-      </div>
-
-      {/* Finished Goods Card */}
-      <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 text-center hover:shadow-sm transition-shadow">
-        <div className="text-2xl font-bold text-purple-600">{data.finishedGoods.filter(fg => fg.itemId).length}</div>
-        <div className="text-sm text-purple-800 font-medium">FINISHED GOODS</div>
-        <div className="text-xs text-purple-600 mt-1">
-          {data.finishedGoods.filter(fg => fg.itemId).length > 0 
-            ? `${data.finishedGoods.filter(fg => fg.itemId).length} item(s)` 
-            : "No items added"}
-        </div>
-      </div>
-
-      {/* Scrap Materials Card */}
-      <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 text-center hover:shadow-sm transition-shadow">
-        <div className="text-2xl font-bold text-orange-600">{data.scrapItems.filter(s => s.id).length}</div>
-        <div className="text-sm text-orange-800 font-medium">SCRAP MATERIALS</div>
-        <div className="text-xs text-orange-600 mt-1">
-          {data.scrapItems.filter(s => s.id).length > 0 
-            ? `${data.scrapItems.filter(s => s.id).length} item(s)` 
-            : "No items added"}
-        </div>
-      </div>
-    </div>
-
-
-    {/* Upload Snapshot (Optional - Kept as backup) */}
-    <div className="mt-6 pt-4 border-t">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-gray-600">Optional: Upload supporting documents</span>
-        <Button variant="outline" size="sm">
-          <Plus className="h-4 w-4 mr-2" /> Upload Document
+    <Dialog open={open} onOpenChange={(isOpen) => { setOpen(isOpen); if (isOpen && !hasFetched) fetchRoutings(); }}>
+      <DialogTrigger asChild>
+        <Button className="bg-green-600 hover:bg-green-700 text-white border-0">
+          <GitBranch className="h-4 w-4 mr-2" /> Select Routing
         </Button>
-      </div>
-    </div>
-  </div>
-)}
-
-      {/* 2. Finished Goods */}
-      <div className="flex items-center justify-between p-5 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggleSection("finishedGoods")}>
-        <h3 className="text-lg font-semibold flex items-center gap-2 text-[#105076]">
-          <Package className="h-5 w-5 text-green-600" /> Finished Goods
-        </h3>
-        {data.expanded.finishedGoods ? <ChevronUp /> : <ChevronDown />}
-      </div>
-      {data.expanded.finishedGoods && (
-        <div className="p-6 border-b bg-gray-50">
-          <div className="flex justify-between items-center mb-4">
-            <h4 className="font-medium">Finished Goods List</h4>
-            <Button size="sm" onClick={addFinishedGood}><Plus className="h-4 w-4 mr-2" /> Add Row</Button>
-          </div>
-          <div className="bg-white rounded-lg border overflow-hidden">
-            <div className="grid grid-cols-9 text-sm font-medium text-gray-600 bg-gray-100 border-b">
-              <div className="px-3 py-3">#</div>
-              <div className="px-3 py-3 col-span-2">Item</div>
-              <div className="px-3 py-3">Category</div>
-              <div className="px-3 py-3">Qty</div>
-              <div className="px-3 py-3">Unit</div>
-              <div className="px-3 py-3">Cost %</div>
-              <div className="px-3 py-3">Comment</div>
-              <div className="px-3 py-3">Alternate</div>
-            </div>
-            {data.finishedGoods.map((fg, i) => (
-              <div key={i} className="grid grid-cols-9 border-b hover:bg-gray-50">
-                <div className="px-3 py-3 text-gray-500 flex items-center justify-center">{i + 1}</div>
-                <div className="px-3 py-3 col-span-2">
-                  <ItemSelect
-                    value={fg.itemId}
-                    onValueChange={(value, itemData) => updateFinishedGood(i, "itemId", value, itemData)}
-                    items={items}
-                    placeholder="Select item"
-                  />
-                </div>
-                <div className="px-3 py-3 flex items-center">
-                  <Input 
-                    value={fg.category} 
-                    onChange={(e) => updateFinishedGood(i, "category", e.target.value)} 
-                    className="h-9" 
-                    placeholder="Category"
-                    readOnly={!!fg.itemData}
-                  />
-                </div>
-                <div className="px-3 py-3 flex items-center">
-                  <Input 
-                    type="number" 
-                    value={fg.quantity} 
-                    onChange={(e) => updateFinishedGood(i, "quantity", Number(e.target.value) || 0)} 
-                    className="h-9" 
-                    min="1"
-                  />
-                </div>
-                <div className="px-3 py-3 flex items-center">
-                  <Input 
-                    value={fg.unit} 
-                    onChange={(e) => updateFinishedGood(i, "unit", e.target.value)} 
-                    className="h-9" 
-                    placeholder="Unit"
-                    readOnly={!!fg.itemData}
-                  />
-                </div>
-                <div className="px-3 py-3 flex items-center">
-                  <Input 
-                    type="number" 
-                    value={fg.costAllocation} 
-                    onChange={(e) => updateFinishedGood(i, "costAllocation", Number(e.target.value) || 0)} 
-                    className="h-9" 
-                    placeholder="%"
-                    min="0"
-                    max="100"
-                  />
-                </div>
-                <div className="px-3 py-3 flex items-center">
-                  <Input 
-                    value={fg.comment} 
-                    onChange={(e) => updateFinishedGood(i, "comment", e.target.value)} 
-                    className="h-9" 
-                    placeholder="Comment"
-                  />
-                </div>
-                <div className="px-3 py-3 flex gap-1 items-center">
-                  <Input 
-                    value={fg.alternateItems} 
-                    onChange={(e) => updateFinishedGood(i, "alternateItems", e.target.value)} 
-                    className="h-9" 
-                    placeholder="Alt items"
-                  />
-                  {data.finishedGoods.length > 1 && (
-                    <Button variant="ghost" size="icon" onClick={() => removeFinishedGood(i)} className="h-8 w-8">
-                      <Trash2 className="h-4 w-4 text-red-600" />
-                    </Button>
-                  )}
-                </div>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Select Routing</DialogTitle>
+          <DialogDescription>Choose an existing routing or create a new one</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 mt-2">
+          {showNewForm ? (
+            <div className="border rounded-lg p-4 bg-gray-50 space-y-3">
+              <h3 className="font-semibold text-sm">Create New Routing</h3>
+              <div>
+                <Label className="text-xs">Routing Number *</Label>
+                <Input value={newRouting.number} onChange={(e) => setNewRouting({ ...newRouting, number: e.target.value })} className="mt-1 h-9" placeholder="e.g. R-001" />
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 3. Raw Materials */}
-      <div className="flex items-center justify-between p-5 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggleSection("rawMaterials")}>
-        <h3 className="text-lg font-semibold flex items-center gap-2 text-[#105076]">
-          <Package className="h-5 w-5 text-blue-600" /> Raw Materials
-        </h3>
-        {data.expanded.rawMaterials ? <ChevronUp /> : <ChevronDown />}
-      </div>
-      {data.expanded.rawMaterials && (
-        <div className="p-6 border-b bg-gray-50">
-          <div className="flex justify-between items-center mb-4">
-            <h4 className="font-medium">Raw Materials Required</h4>
-            <Button size="sm" onClick={addRawMaterial}><Plus className="h-4 w-4 mr-2" /> Add Row</Button>
-          </div>
-          <div className="bg-white rounded-lg border overflow-hidden">
-            <div className="grid grid-cols-8 text-sm font-medium text-gray-600 bg-gray-100 border-b">
-              <div className="px-3 py-3">#</div>
-              <div className="px-3 py-3 col-span-2">Item</div>
-              <div className="px-3 py-3">Category</div>
-              <div className="px-3 py-3">Qty</div>
-              <div className="px-3 py-3">Unit</div>
-              <div className="px-3 py-3">Comment</div>
-              <div className="px-3 py-3">Alternate</div>
-            </div>
-            {data.rawMaterials.map((rm, i) => (
-              <div key={i} className="grid grid-cols-8 border-b hover:bg-gray-50">
-                <div className="px-3 py-3 text-gray-500 flex items-center justify-center">{i + 1}</div>
-                <div className="px-3 py-3 col-span-2">
-                  <ItemSelect
-                    value={rm.itemId}
-                    onValueChange={(value, itemData) => updateRawMaterial(i, "itemId", value, itemData)}
-                    items={items}
-                    placeholder="Select item"
-                  />
-                </div>
-                <div className="px-3 py-3 flex items-center">
-                  <Input 
-                    value={rm.category} 
-                    onChange={(e) => updateRawMaterial(i, "category", e.target.value)} 
-                    className="h-9" 
-                    placeholder="Category"
-                    readOnly={!!rm.itemData}
-                  />
-                </div>
-                <div className="px-3 py-3 flex items-center">
-                  <Input 
-                    type="number" 
-                    value={rm.quantity} 
-                    onChange={(e) => updateRawMaterial(i, "quantity", Number(e.target.value) || 0)} 
-                    className="h-9" 
-                    min="1"
-                  />
-                </div>
-                <div className="px-3 py-3 flex items-center">
-                  <Input 
-                    value={rm.unit} 
-                    onChange={(e) => updateRawMaterial(i, "unit", e.target.value)} 
-                    className="h-9" 
-                    placeholder="Unit"
-                    readOnly={!!rm.itemData}
-                  />
-                </div>
-                <div className="px-3 py-3 flex items-center">
-                  <Input 
-                    value={rm.comment} 
-                    onChange={(e) => updateRawMaterial(i, "comment", e.target.value)} 
-                    className="h-9" 
-                    placeholder="Comment"
-                  />
-                </div>
-                <div className="px-3 py-3 flex gap-1 items-center">
-                  <Input 
-                    value={rm.alternateItems} 
-                    onChange={(e) => updateRawMaterial(i, "alternateItems", e.target.value)} 
-                    className="h-9" 
-                    placeholder="Alt items"
-                  />
-                  {data.rawMaterials.length > 1 && (
-                    <Button variant="ghost" size="icon" onClick={() => removeRawMaterial(i)} className="h-8 w-8">
-                      <Trash2 className="h-4 w-4 text-red-600" />
-                    </Button>
-                  )}
-                </div>
+              <div>
+                <Label className="text-xs">Routing Name *</Label>
+                <Input value={newRouting.name} onChange={(e) => setNewRouting({ ...newRouting, name: e.target.value })} className="mt-1 h-9" placeholder="e.g. Assembly Line" />
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 4. Routing */}
-      <div className="flex items-center justify-between p-5 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggleSection("routing")}>
-        <h3 className="text-lg font-semibold flex items-center gap-2 text-[#105076]">
-          <GitBranch className="h-5 w-5 text-purple-600" /> Routing
-        </h3>
-        {data.expanded.routing ? <ChevronUp /> : <ChevronDown />}
-      </div>
-      {data.expanded.routing && (
-        <div className="p-6 border-b bg-gray-50">
-          <div className="mb-6">
-            <RoutingDialog 
-              onSelect={(routing, comment) => addRouting(routing, comment)}
-              levelIndex={levelIndex}
-            />
-          </div>
-          
-          {data.routing.length > 0 && (
-            <div className="bg-white rounded-lg border overflow-hidden">
-              <div className="grid grid-cols-5 text-sm font-medium text-gray-600 bg-gray-100 border-b">
-                <div className="px-3 py-3">#</div>
-                <div className="px-3 py-3">Routing Number</div>
-                <div className="px-3 py-3">Name</div>
-                <div className="px-3 py-3">Comment</div>
-                <div className="px-3 py-3">Actions</div>
+              <div>
+                <Label className="text-xs">Description</Label>
+                <Textarea value={newRouting.desc} onChange={(e) => setNewRouting({ ...newRouting, desc: e.target.value })} className="mt-1" rows={2} />
               </div>
-              {data.routing.map((route, i) => (
-                <div key={i} className="grid grid-cols-5 border-b hover:bg-gray-50">
-                  <div className="px-3 py-3 text-gray-500 flex items-center">{i + 1}</div>
-                  <div className="px-3 py-3 flex items-center font-medium">{route.routingNumber}</div>
-                  <div className="px-3 py-3 flex items-center">{route.routingName}</div>
-                  <div className="px-3 py-3 flex items-center">
-                    <Input 
-                      value={route.comment} 
-                      onChange={(e) => {
-                        const updated = [...data.routing];
-                        updated[i].comment = e.target.value;
-                        onUpdate({...data, routing: updated});
-                      }} 
-                      className="h-9" 
-                      placeholder="Add comment"
-                    />
-                  </div>
-                  <div className="px-3 py-3 flex items-center">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      onClick={() => removeRouting(i)}
-                      className="h-8 w-8"
-                    >
-                      <Trash2 className="h-4 w-4 text-red-600" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
+              <div className="flex gap-2">
+                <Button onClick={handleCreate} disabled={creating} size="sm" className="flex-1">
+                  {creating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+                  Create
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setShowNewForm(false)}>Cancel</Button>
+              </div>
             </div>
+          ) : (
+            <Button onClick={() => setShowNewForm(true)} variant="outline" className="w-full" size="sm">
+              <Plus className="h-4 w-4 mr-2" /> Create New Routing
+            </Button>
           )}
-        </div>
-      )}
 
-      {/* 5. Scrap / By-Products */}
-      <div className="flex items-center justify-between p-5 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggleSection("scrap")}>
-        <h3 className="text-lg font-semibold flex items-center gap-2 text-[#105076]">
-          <Trash2 className="h-5 w-5 text-orange-600" /> Scrap / By-Products
-        </h3>
-        {data.expanded.scrap ? <ChevronUp /> : <ChevronDown />}
-      </div>
-      {data.expanded.scrap && (
-        <div className="p-6 border-b bg-gray-50">
-          <div className="bg-white rounded-lg border overflow-hidden">
-            <div className="grid grid-cols-9 text-sm font-semibold text-white" style={{ backgroundColor: "#105076" }}>
-              <div className="px-4 py-3">#</div>
-              <div className="px-4 py-3">Item</div>
-              <div className="px-4 py-3">Name</div>
-              <div className="px-4 py-3">Category</div>
-              <div className="px-4 py-3">Quantity</div>
-              <div className="px-4 py-3">Unit</div>
-              <div className="px-4 py-3">Cost Allocation (%)</div>
-              <div className="px-4 py-3">Comment</div>
-              <div className="px-4 py-3">Actions</div>
+          <div className="border rounded-lg overflow-hidden">
+            <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between">
+              <span className="font-semibold text-sm">Existing Routings</span>
+              <Button variant="ghost" size="sm" onClick={fetchRoutings} disabled={loading} className="h-7 w-7 p-0">
+                <Loader2 className={`h-4 w-4 ${loading ? "animate-spin" : "text-gray-400"}`} />
+              </Button>
             </div>
-
-            {data.scrapItems.length === 0 ? (
-              <div className="text-center py-12 text-gray-500 text-sm">No data available</div>
+            {loading ? (
+              <div className="py-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-blue-500" /></div>
+            ) : error ? (
+              <div className="py-6 text-center text-red-500 text-sm">{error}</div>
+            ) : routings.length === 0 ? (
+              <div className="py-8 text-center text-gray-400 text-sm">No routings found</div>
             ) : (
-              data.scrapItems.map((item, i) => (
-                <ScrapTableRow
-                  key={i}
-                  item={item}
-                  index={i}
-                  onUpdate={updateScrapItem}
-                  onDelete={() => removeScrapItem(i)}
-                  items={items}
-                />
-              ))
+              <div className="max-h-52 overflow-y-auto divide-y">
+                {routings.map((r) => (
+                  <div
+                    key={r.id}
+                    onClick={() => { setSelectedRouting(r); setShowNewForm(false); }}
+                    className={`px-4 py-3 cursor-pointer hover:bg-gray-50 flex items-center gap-3 transition-colors ${selectedRouting?.id === r.id ? "bg-blue-50 border-l-2 border-blue-500" : ""}`}
+                  >
+                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${selectedRouting?.id === r.id ? "bg-blue-600 border-blue-600" : "border-gray-300"}`}>
+                      {selectedRouting?.id === r.id && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                    </div>
+                    <div>
+                      <p className="font-medium text-sm">{r.number}</p>
+                      <p className="text-xs text-gray-500">{r.name}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 
-          <div className="mt-4">
-            <Button onClick={addScrapItem} className="bg-[#105076] hover:bg-[#0d4566]">
-              <Plus className="h-4 w-4 mr-2" /> Add Scrap Row
+          {selectedRouting && (
+            <div>
+              <Label className="text-xs">Comment (optional)</Label>
+              <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Add routing notes..." rows={2} className="mt-1" />
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2 border-t">
+            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                if (!selectedRouting) { alert("Please select a routing"); return; }
+                onSelect(selectedRouting, comment);
+                setOpen(false);
+              }}
+              disabled={!selectedRouting}
+              className="bg-[#105076] hover:bg-[#0d4566]"
+            >
+              Confirm Selection
             </Button>
           </div>
         </div>
-      )}
-
-      {/* 6. Other Charges */}
-      <div className="flex items-center justify-between p-5 cursor-pointer hover:bg-gray-50" onClick={() => toggleSection("otherCharges")}>
-        <h3 className="text-lg font-semibold flex items-center gap-2 text-[#105076]">
-          <DollarSign className="h-5 w-5 text-teal-600" /> Other Charges
-        </h3>
-        {data.expanded.otherCharges ? <ChevronUp /> : <ChevronDown />}
-      </div>
-      {data.expanded.otherCharges && (
-        <div className="p-6">
-          <div className="space-y-3">
-            {data.otherCharges.map((c, i) => (
-              <div key={i} className="grid grid-cols-4 gap-4 p-4 bg-gray-50 rounded-lg items-center">
-                <div className="font-medium text-sm">{c.classification}</div>
-                <div className="text-gray-600 text-sm">{c.account}</div>
-                <Input type="number" value={c.amount} onChange={(e) => updateOtherCharge(i, "amount", Number(e.target.value) || 0)} className="h-10" />
-                <Input value={c.comment} onChange={(e) => updateOtherCharge(i, "comment", e.target.value)} placeholder="Note..." className="h-10" />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };
 
-// Main Page Component - SIMPLIFIED for MainLayout
+// ─────────────────────────────────────────────
+// Main Create BOM Page
+// ─────────────────────────────────────────────
 const CreateBOMPage: React.FC = () => {
   const navigate = useNavigate();
-  const [showDescription, setShowDescription] = useState(false);
-  const [showComments, setShowComments] = useState(false);
-  const [description, setDescription] = useState("");
-  const [comments, setComments] = useState("");
+
   const [docName, setDocName] = useState("DEMO BOM");
   const [customer, setCustomer] = useState("");
   const [fgStore, setFgStore] = useState("");
   const [rmStore, setRmStore] = useState("");
   const [scrapStore, setScrapStore] = useState("");
+  const [description, setDescription] = useState("");
+  const [comments, setComments] = useState("");
+  const [showDescription, setShowDescription] = useState(false);
+  const [showComments, setShowComments] = useState(false);
   const [loading, setLoading] = useState(false);
-  
-  // State for items from API
+  const [successDialogOpen, setSuccessDialogOpen] = useState(false);
+  const [createdDocNumber, setCreatedDocNumber] = useState("");
+
   const [items, setItems] = useState<Item[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
-  const [errorItems, setErrorItems] = useState<string | null>(null);
-  
-  // State for warehouses from API
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loadingWarehouses, setLoadingWarehouses] = useState(true);
-  const [errorWarehouses, setErrorWarehouses] = useState<string | null>(null);
 
-  const [levels, setLevels] = useState<BOMLevelData[]>([
-    {
-      expanded: {
-        bomSnapshot: true,
-        finishedGoods: true,
-        rawMaterials: true,
-        routing: true,
-        scrap: true,
-        otherCharges: true,
-      },
-      finishedGoods: [{ itemId: "", name: "", category: "", quantity: 1, unit: "", costAllocation: 0, comment: "", alternateItems: "" }],
-      rawMaterials: [{ itemId: "", name: "", category: "", quantity: 1, unit: "", comment: "", alternateItems: "" }],
-      routing: [],
-      scrapItems: [],
-      otherCharges: [
-        { classification: "Labour Charges", account: "Mintage", amount: 0, comment: "" },
-        { classification: "Machinery Charges", account: "Account", amount: 0, comment: "" },
-        { classification: "Electricity Charges", account: "Account", amount: 0, comment: "" },
-        { classification: "Other Charges", account: "Account", amount: 0, comment: "" },
-      ],
+  const [bom, setBom] = useState<BOMSections>({
+    expanded: {
+      bomSummary: true,
+      finishedGoods: true,
+      rawMaterials: true,
+      routing: true,
+      scrap: true,
+      otherCharges: true,
     },
-  ]);
+    finishedGoods: [
+      { itemId: "", name: "", category: "", quantity: 1, unit: "", costAllocation: 0, comment: "", alternateItems: "" },
+    ],
+    rawMaterials: [
+      { itemId: "", name: "", category: "", quantity: 1, unit: "", comment: "", alternateItems: "" },
+    ],
+    routing: [],
+    scrapItems: [],
+    otherCharges: [
+      { classification: "Labour Charges",     account: "Mintage", amount: 0, comment: "" },
+      { classification: "Machinery Charges",  account: "Account", amount: 0, comment: "" },
+      { classification: "Electricity Charges",account: "Account", amount: 0, comment: "" },
+      { classification: "Other Charges",      account: "Account", amount: 0, comment: "" },
+    ],
+  });
 
-  // Generate document number
-  const generateDocNumber = () => {
-    const timestamp = new Date().getTime();
-    return `BOM${timestamp.toString().slice(-6)}`;
+  const [childBOMDialogOpen, setChildBOMDialogOpen] = useState(false);
+  const [childBOMTargetIdx, setChildBOMTargetIdx] = useState<number | null>(null);
+  // Tracks which parent RM rows have their child BOM sub-rows EXPANDED (default: all expanded)
+  const [childBOMExpandedSet, setChildBOMExpandedSet] = useState<Set<number>>(new Set());
+  const [docNumber] = useState(() => `BOM${Date.now().toString().slice(-6)}`);
+
+  const toggleChildBOMExpanded = (idx: number) => {
+    setChildBOMExpandedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) { next.delete(idx); } else { next.add(idx); }
+      return next;
+    });
+  };
+  // When a child BOM is saved, auto-expand it
+  const handleChildBOMSaveWithExpand = (childBOM: LinkedChildBOM) => {
+    if (childBOMTargetIdx === null) return;
+    const upd = [...bom.rawMaterials];
+    upd[childBOMTargetIdx] = { ...upd[childBOMTargetIdx], childBOM };
+    setBom((p) => ({ ...p, rawMaterials: upd }));
+    // Auto-expand newly linked child BOM
+    setChildBOMExpandedSet((prev) => new Set(prev).add(childBOMTargetIdx!));
+    setChildBOMTargetIdx(null);
   };
 
-  const [docNumber] = useState(generateDocNumber());
-
-  // Debug: Check if component mounts
+  // ── Fetch items ──
   useEffect(() => {
-    console.log("🚀 CreateBOMPage mounted!");
-    console.log("Current path:", window.location.pathname);
-  }, []);
-
-  // Fetch items from API on component mount
-  useEffect(() => {
-    const fetchItems = async () => {
+    (async () => {
+      setLoadingItems(true);
       try {
-        setLoadingItems(true);
-        setErrorItems(null);
-        
-        const response = await bomAPI.getItems();
-        
-        if (response?.status && Array.isArray(response.data)) {
-          // Transform API response to match our Item interface
-          const transformedItems: Item[] = response.data.map((item: any) => ({
-            id: item.id?.toString() || "",
-            name: item.name || "",
-            sku: item.sku || "",
-            unit: item.unit || undefined,
-            category: item.category || undefined,
-            currentStock: item.currentStock || "0",
-            defaultPrice: item.defaultPrice || "0",
-            hsnCode: item.hsnCode || "",
-            minimumStockLevel: item.minimumStockLevel || "0",
-            maximumStockLevel: item.maximumStockLevel || "0"
-          }));
-          
-          setItems(transformedItems);
+        const res = await bomAPI.getItems();
+        if (res?.status && Array.isArray(res.data)) {
+          setItems(res.data.map((item: any) => ({
+            id: item.id?.toString() ?? "",
+            name: item.name ?? "",
+            sku: item.sku ?? "",
+            unit: item.unit,
+            category: item.category,
+            currentStock: item.currentStock ?? "0",
+            defaultPrice: item.defaultPrice ?? "0",
+            hsnCode: item.hsnCode ?? "",
+            minimumStockLevel: item.minimumStockLevel ?? "0",
+            maximumStockLevel: item.maximumStockLevel ?? "0",
+          })));
         } else {
-          setErrorItems("Invalid API response format");
-          // Set mock data for development
           setItems([
-            {
-              id: "71",
-              name: "test",
-              sku: "ITEM-001",
-              unit: { name: "Kg", description: "weight unit", uom: "BOX", id: 32 },
-              category: { name: "electronics", id: 41, description: "n/a" },
-              currentStock: "2070",
-              defaultPrice: "1000",
-              hsnCode: "TTTT",
-              minimumStockLevel: "1500",
-              maximumStockLevel: "2000"
-            },
-            {
-              id: "72",
-              name: "Product A",
-              sku: "ITEM-002",
-              unit: { name: "Pcs", description: "piece unit", uom: "PCS", id: 33 },
-              category: { name: "mechanical", id: 42, description: "mechanical parts" },
-              currentStock: "150",
-              defaultPrice: "500",
-              hsnCode: "HHHH",
-              minimumStockLevel: "100",
-              maximumStockLevel: "200"
-            }
+            { id: "71", name: "test",      sku: "ITEM-001", unit: { name: "Kg",  description: "", uom: "BOX", id: 32 }, category: { name: "electronics", id: 41, description: "" }, currentStock: "2070", defaultPrice: "1000", hsnCode: "TTTT", minimumStockLevel: "1500", maximumStockLevel: "2000" },
+            { id: "72", name: "Product A", sku: "ITEM-002", unit: { name: "Pcs", description: "", uom: "PCS", id: 33 }, category: { name: "mechanical",  id: 42, description: "" }, currentStock: "150",  defaultPrice: "500",  hsnCode: "HHHH", minimumStockLevel: "100",  maximumStockLevel: "200"  },
           ]);
         }
-      } catch (err) {
-        console.error("Error fetching items:", err);
-        setErrorItems("Failed to load items from server");
-        // Set mock data for development
-        setItems([
-          {
-            id: "71",
-            name: "test",
-            sku: "ITEM-001",
-            unit: { name: "Kg", description: "weight unit", uom: "BOX", id: 32 },
-            category: { name: "electronics", id: 41, description: "n/a" },
-            currentStock: "2070",
-            defaultPrice: "1000",
-            hsnCode: "TTTT",
-            minimumStockLevel: "1500",
-            maximumStockLevel: "2000"
-          }
-        ]);
-      } finally {
-        setLoadingItems(false);
-      }
-    };
-
-    fetchItems();
+      } catch { setItems([]); }
+      finally { setLoadingItems(false); }
+    })();
   }, []);
 
-  // Fetch warehouses from API on component mount
+  // ── Fetch warehouses ──
   useEffect(() => {
-    const fetchWarehouses = async () => {
+    (async () => {
+      setLoadingWarehouses(true);
       try {
-        setLoadingWarehouses(true);
-        setErrorWarehouses(null);
-        
-        const response = await warehouseAPI.getWarehouses();
-        
-        if (response?.status && Array.isArray(response.data)) {
-          console.log("Warehouses loaded:", response.data);
-          setWarehouses(response.data);
+        const res = await warehouseAPI.getWarehouses();
+        if (res?.status && Array.isArray(res.data)) {
+          setWarehouses(res.data);
         } else {
-          setErrorWarehouses("Invalid warehouse API response format");
-          // Set mock data for development
-          setWarehouses([
-            { id: 48, name: "Test Store" },
-            { id: 1, name: "Main Warehouse" },
-            { id: 2, name: "Secondary Warehouse" }
-          ]);
+          setWarehouses([{ id: 48, name: "Test Store" }, { id: 1, name: "Main Warehouse" }, { id: 2, name: "Secondary Warehouse" }]);
         }
-      } catch (err) {
-        console.error("Error fetching warehouses:", err);
-        setErrorWarehouses("Failed to load warehouses from server");
-        // Set mock data for development
-        setWarehouses([
-          { id: 48, name: "Test Store" },
-          { id: 1, name: "Main Warehouse" },
-          { id: 2, name: "Secondary Warehouse" }
-        ]);
-      } finally {
-        setLoadingWarehouses(false);
-      }
-    };
-
-    fetchWarehouses();
+      } catch {
+        setWarehouses([{ id: 48, name: "Test Store" }, { id: 1, name: "Main Warehouse" }, { id: 2, name: "Secondary Warehouse" }]);
+      } finally { setLoadingWarehouses(false); }
+    })();
   }, []);
 
-  const addNewLevel = () => {
-    setLevels((prev) => [
-      ...prev,
-      {
-        expanded: { bomSnapshot: true, finishedGoods: true, rawMaterials: true, routing: true, scrap: true, otherCharges: true },
-        finishedGoods: [{ itemId: "", name: "", category: "", quantity: 1, unit: "", costAllocation: 0, comment: "", alternateItems: "" }],
-        rawMaterials: [{ itemId: "", name: "", category: "", quantity: 1, unit: "", comment: "", alternateItems: "" }],
-        routing: [],
-        scrapItems: [],
-        otherCharges: [
-          { classification: "Labour Charges", account: "Mintage", amount: 0, comment: "" },
-          { classification: "Machinery Charges", account: "Account", amount: 0, comment: "" },
-          { classification: "Electricity Charges", account: "Account", amount: 0, comment: "" },
-          { classification: "Other Charges", account: "Account", amount: 0, comment: "" },
-        ],
-      },
-    ]);
+  const toggle = (section: keyof BOMSections["expanded"]) =>
+    setBom((p) => ({ ...p, expanded: { ...p.expanded, [section]: !p.expanded[section] } }));
+
+  // ── Finished Goods ──
+  const addFG = () =>
+    setBom((p) => ({ ...p, finishedGoods: [...p.finishedGoods, { itemId: "", name: "", category: "", quantity: 1, unit: "", costAllocation: 0, comment: "", alternateItems: "" }] }));
+  const removeFG = (idx: number) => {
+    if (bom.finishedGoods.length <= 1) return;
+    setBom((p) => ({ ...p, finishedGoods: p.finishedGoods.filter((_, i) => i !== idx) }));
+  };
+  const updateFG = (idx: number, field: keyof UIFinishedGood, value: any, itemData?: Item) => {
+    const upd = [...bom.finishedGoods];
+    if (field === "itemId" && itemData) {
+      upd[idx] = { ...upd[idx], itemId: value, name: itemData.name, category: itemData.category?.name ?? "", unit: itemData.unit?.name ?? "", itemData };
+    } else { upd[idx] = { ...upd[idx], [field]: value }; }
+    setBom((p) => ({ ...p, finishedGoods: upd }));
   };
 
-  const deleteLevel = (index: number) => {
-    if (levels.length === 1) return;
-    setLevels((prev) => prev.filter((_, i) => i !== index));
+  // ── Raw Materials ──
+  const addRM = () =>
+    setBom((p) => ({ ...p, rawMaterials: [...p.rawMaterials, { itemId: "", name: "", category: "", quantity: 1, unit: "", comment: "", alternateItems: "" }] }));
+  const removeRM = (idx: number) =>
+    setBom((p) => ({ ...p, rawMaterials: p.rawMaterials.filter((_, i) => i !== idx) }));
+  const updateRM = (idx: number, field: keyof UIRawMaterial, value: any, itemData?: Item) => {
+    const upd = [...bom.rawMaterials];
+    if (field === "itemId" && itemData) {
+      upd[idx] = { ...upd[idx], itemId: value, name: itemData.name, category: itemData.category?.name ?? "", unit: itemData.unit?.name ?? "", itemData };
+    } else { upd[idx] = { ...upd[idx], [field]: value }; }
+    setBom((p) => ({ ...p, rawMaterials: upd }));
+  };
+  const openChildBOM = (idx: number) => { setChildBOMTargetIdx(idx); setChildBOMDialogOpen(true); };
+  const unlinkChildBOM = (idx: number) => {
+    const upd = [...bom.rawMaterials];
+    upd[idx] = { ...upd[idx], childBOM: null };
+    setBom((p) => ({ ...p, rawMaterials: upd }));
+    // Remove from expanded set
+    setChildBOMExpandedSet((prev) => { const next = new Set(prev); next.delete(idx); return next; });
   };
 
-  const updateLevel = (index: number, newData: BOMLevelData) => {
-    setLevels((prev) => prev.map((lvl, i) => (i === index ? newData : lvl)));
+  // ── Routing ──
+  const addRouting = (routing: Routing, comment: string) =>
+    setBom((p) => ({ ...p, routing: [...p.routing, { routingId: routing.id, routingName: routing.name, routingNumber: routing.number, comment }] }));
+  const removeRouting = (idx: number) =>
+    setBom((p) => ({ ...p, routing: p.routing.filter((_, i) => i !== idx) }));
+
+  // ── Scrap ──
+  const addScrap = () =>
+    setBom((p) => ({ ...p, scrapItems: [...p.scrapItems, { id: "", name: "", category: "", quantity: 0, unit: "", costAllocation: 0, comment: "" }] }));
+  const removeScrap = (idx: number) =>
+    setBom((p) => ({ ...p, scrapItems: p.scrapItems.filter((_, i) => i !== idx) }));
+  const updateScrap = (idx: number, field: keyof UIScrapItem, value: any, itemData?: Item) => {
+    const upd = [...bom.scrapItems];
+    if (field === "id" && itemData) {
+      upd[idx] = { ...upd[idx], id: value, name: itemData.name, category: itemData.category?.name ?? "", unit: itemData.unit?.name ?? "", itemData };
+    } else { upd[idx] = { ...upd[idx], [field]: value }; }
+    setBom((p) => ({ ...p, scrapItems: upd }));
   };
 
-  // Prepare BOM data for API
-  const prepareBOMData = (status: "draft" | "published") => {
-    const bomItems = levels.map(level => {
-      // Finished Goods (take first item only, assuming one finished good per level)
-      const fg = level.finishedGoods[0];
-      
-      // Raw Materials
-      const rawMaterials = level.rawMaterials.map(rm => ({
-        itemId: parseInt(rm.itemId) || 0,
-        unitId: rm.itemData?.unit?.id || 0,
-        quantity: rm.quantity,
-        costAlloc: 0, // Default value, can be added to UI if needed
-        comment: rm.comment,
-        hasAlternate: !!rm.alternateItems
-      }));
+  const updateCharge = (idx: number, field: keyof UIOtherCharge, value: any) => {
+    const upd = [...bom.otherCharges];
+    upd[idx] = { ...upd[idx], [field]: value };
+    setBom((p) => ({ ...p, otherCharges: upd }));
+  };
 
-      // Routing
-      const routing = level.routing.map(route => ({
-        routingId: route.routingId,
-        comment: route.comment
-      }));
-
-      // Scrap items
-      const scrap = level.scrapItems.map(scrap => ({
-        itemId: parseInt(scrap.id) || 0,
-        unitId: scrap.itemData?.unit?.id || 0,
-        quantity: scrap.quantity,
-        costAlloc: scrap.costAllocation,
-        comment: scrap.comment || undefined
-      }));
-
-      // Other Charges
-      const otherCharges = level.otherCharges.map(charge => ({
-        charges: charge.amount,
-        classification: charge.classification,
-        comment: charge.comment || undefined
-      }));
-
-      return {
-        finishedGoods: {
-          itemId: parseInt(fg.itemId) || 0,
-          unitId: fg.itemData?.unit?.id || 0,
-          quantity: fg.quantity,
-          costAlloc: fg.costAllocation,
-          comment: fg.comment,
-          hasAlternate: !!fg.alternateItems
-        },
-        rawMaterials,
-        routing,
-        scrap,
-        otherCharges
+  // ── Build API payload (one bomItem per FG row) ──
+  const prepareBOMData = (status: "draft" | "published"): BOMCreateRequest => {
+    const bomItems: BOMItemRequest[] = bom.finishedGoods.map((fg): BOMItemRequest => {
+      const finishedGoods: FinishedGoodRequest = {
+        itemId: parseInt(fg.itemId) || 0,
+        unitId: fg.itemData?.unit?.id ?? 0,
+        quantity: fg.quantity,
+        costAlloc: fg.costAllocation,
+        comment: fg.comment || undefined,
+        hasAlternate: !!fg.alternateItems,
       };
+      const rawMaterials: RawMaterialRequest[] = bom.rawMaterials.map((rm): RawMaterialRequest => ({
+        itemId: parseInt(rm.itemId) || 0,
+        unitId: rm.itemData?.unit?.id ?? 0,
+        quantity: rm.quantity,
+        costAlloc: 0,
+        comment: rm.comment || undefined,
+        hasAlternate: !!rm.alternateItems,
+      }));
+      const routing: RoutingRequest[] = bom.routing.map((r): RoutingRequest => ({
+        routingId: r.routingId,
+        comment: r.comment || undefined,
+      }));
+      const scrap: ScrapRequest[] = bom.scrapItems.filter((s) => s.id).map((s): ScrapRequest => ({
+        itemId: parseInt(s.id) || 0,
+        unitId: s.itemData?.unit?.id ?? 0,
+        quantity: s.quantity,
+        costAlloc: s.costAllocation,
+        comment: s.comment || undefined,
+      }));
+      const otherCharges: OtherChargeRequest[] = bom.otherCharges.map((c): OtherChargeRequest => ({
+        charges: c.amount,
+        classification: c.classification,
+        comment: c.comment || undefined,
+      }));
+
+      // subBomId: use the first raw material's linked child BOM
+      const firstChildBOM = bom.rawMaterials.find((rm) => rm.childBOM?.bomId);
+      const subBomId = firstChildBOM?.childBOM?.bomId ?? undefined;
+
+      return { finishedGoods, subBomId, rawMaterials, routing, scrap, otherCharges };
     });
 
     return {
       docNumber,
-      docDate: new Date().toISOString(),
+      docDate: new Date().toISOString().split("T")[0],
       docName,
       docDescription: description || undefined,
       rmStoreId: parseInt(rmStore) || warehouses[0]?.id || 48,
@@ -1460,358 +1078,540 @@ const CreateBOMPage: React.FC = () => {
       scrapStoreId: parseInt(scrapStore) || warehouses[0]?.id || 48,
       status,
       docComment: comments || undefined,
-      bomItems
+      bomItems,
     };
   };
 
   const handleSaveDraft = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const bomData = prepareBOMData("draft");
-      
-      console.log("Saving draft:", bomData);
-      
-      const response = await bomAPI.createBOM(bomData);
-      
-      if (response?.status) {
-        console.log("BOM draft saved successfully:", response.data);
-        alert("BOM saved as draft successfully!");
-        navigate(-1);
-      } else {
-        console.error("Failed to save BOM draft:", response);
-        alert("Failed to save BOM draft. Please try again.");
-      }
-    } catch (error) {
-      console.error("Error saving BOM draft:", error);
-      alert("Error saving BOM draft. Please check console for details.");
-    } finally {
-      setLoading(false);
-    }
+      const payload = prepareBOMData("draft");
+      console.log("Draft payload:", JSON.stringify(payload, null, 2));
+      const res = await bomAPI.createBOM(payload);
+      if (res?.status) { setCreatedDocNumber(docNumber); setSuccessDialogOpen(true); }
+      else alert("Failed to save draft. " + (res?.message ?? ""));
+    } catch (err) { console.error(err); alert("Error saving draft."); }
+    finally { setLoading(false); }
   };
 
   const handleSaveBOM = async () => {
-    // Validate required fields
-    if (!docName.trim()) {
-      alert("Please enter a BOM name");
-      return;
-    }
-
-    if (!customer.trim()) {
-      alert("Please enter a customer name");
-      return;
-    }
-
-    // Validate each level
-    for (let i = 0; i < levels.length; i++) {
-      const level = levels[i];
-      
-      // Validate finished goods
-      for (let j = 0; j < level.finishedGoods.length; j++) {
-        const fg = level.finishedGoods[j];
-        if (!fg.itemId) {
-          alert(`Level ${i + 1}: Please select an item for Finished Goods row ${j + 1}`);
-          return;
-        }
-        if (fg.quantity <= 0) {
-          alert(`Level ${i + 1}: Please enter a valid quantity for Finished Goods row ${j + 1}`);
-          return;
-        }
-      }
-
-      // Validate raw materials
-      for (let j = 0; j < level.rawMaterials.length; j++) {
-        const rm = level.rawMaterials[j];
-        if (!rm.itemId) {
-          alert(`Level ${i + 1}: Please select an item for Raw Materials row ${j + 1}`);
-          return;
-        }
-        if (rm.quantity <= 0) {
-          alert(`Level ${i + 1}: Please enter a valid quantity for Raw Materials row ${j + 1}`);
-          return;
-        }
-      }
-    }
-
+    if (!docName.trim()) { alert("Please enter a BOM name"); return; }
+    if (!customer.trim()) { alert("Please enter a customer name"); return; }
+    if (!bom.finishedGoods[0]?.itemId) { alert("Please select at least one Finished Good"); return; }
+    setLoading(true);
     try {
-      setLoading(true);
-      const bomData = prepareBOMData("published");
-      
-      console.log("Saving BOM:", bomData);
-      
-      const response = await bomAPI.createBOM(bomData);
-      
-      if (response?.status) {
-        console.log("BOM created successfully:", response.data);
-        alert("BOM created successfully!");
-        navigate(-1);
-      } else {
-        console.error("Failed to create BOM:", response);
-        alert("Failed to create BOM. Please try again.");
-      }
-    } catch (error) {
-      console.error("Error creating BOM:", error);
-      alert("Error creating BOM. Please check console for details.");
-    } finally {
-      setLoading(false);
-    }
+      const payload = prepareBOMData("published");
+      console.log("BOM payload:", JSON.stringify(payload, null, 2));
+      const res = await bomAPI.createBOM(payload);
+      if (res?.status) { setCreatedDocNumber(docNumber); setSuccessDialogOpen(true); }
+      else alert("Failed to create BOM. " + (res?.message ?? ""));
+    } catch (err) { console.error(err); alert("Error creating BOM."); }
+    finally { setLoading(false); }
   };
 
+  const WarehouseSelect: React.FC<{ value: string; onChange: (v: string) => void; placeholder: string }> = ({ value, onChange, placeholder }) => (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-11">
+        <SelectValue placeholder={placeholder}>
+          {warehouses.find((w) => w.id.toString() === value)?.name ?? placeholder}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent className="z-[100]">
+        {loadingWarehouses ? (
+          <div className="py-4 text-center"><Loader2 className="h-4 w-4 animate-spin mx-auto" /></div>
+        ) : warehouses.map((w) => (
+          <SelectItem key={w.id} value={w.id.toString()}>{w.name}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+
+  // ─────────────────────────────────────────────
   return (
-    <div className="p-6 max-w-8xl mx-auto">
+    <div className="p-6 max-w-full mx-auto">
+
       {/* Page Header */}
       <div className="mb-6">
-        <div className="flex items-center gap-4 mb-4">
-          <Button variant="ghost" onClick={() => navigate(-1)} className="h-10 w-10 p-0">
+        <div className="flex items-center gap-3 mb-2">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)} className="h-9 w-9">
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h2 className="text-2xl font-bold text-[#105076]">Create Bill of Material</h2>
+          <h1 className="text-2xl font-bold text-[#105076]">Create Bill of Material</h1>
         </div>
-        <div className="text-sm bg-gray-100 px-3 py-1 rounded inline-block">
-          Document: <span className="font-bold">{docNumber}</span>
+        <div className="ml-12">
+          <span className="text-xs bg-gray-100 text-gray-600 px-3 py-1 rounded font-mono">Doc # {docNumber}</span>
         </div>
       </div>
 
-      {/* Items Loading/Error State */}
       {loadingItems && (
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-3">
-          <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />
-          <span className="text-blue-700">Loading items from inventory...</span>
-        </div>
-      )}
-      
-      {errorItems && !loadingItems && (
-        <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-3">
-          <span className="text-yellow-700">{errorItems}. Using mock data for demonstration.</span>
-        </div>
-      )}
-
-      {/* Warehouses Loading/Error State */}
-      {loadingWarehouses && (
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-3">
-          <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />
-          <span className="text-blue-700">Loading warehouses...</span>
-        </div>
-      )}
-      
-      {errorWarehouses && !loadingWarehouses && (
-        <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-3">
-          <span className="text-yellow-700">{errorWarehouses}. Using mock data for demonstration.</span>
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2 text-blue-700 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin shrink-0" /> Loading inventory items…
         </div>
       )}
 
       {/* Document Details */}
-      <div className="border rounded-lg p-6 bg-white mb-6 shadow-sm">
-        <h3 className="text-lg font-semibold mb-6 text-[#105076]">Document Details</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
-          <div className="space-y-2">
-            <Label>Document Number</Label>
-            <Input value={docNumber} readOnly className="h-11 bg-gray-100" />
+      <div className="border rounded-xl p-6 bg-white mb-6 shadow-sm">
+        <h3 className="text-base font-semibold mb-5 text-[#105076]">Document Details</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Document Number</Label>
+            <Input value={docNumber} readOnly className="h-10 bg-gray-100 font-mono text-sm" />
           </div>
-          <div className="space-y-2">
-            <Label>Customer <span className="text-red-500">*</span></Label>
-            <Input 
-              value={customer} 
-              onChange={(e) => setCustomer(e.target.value)} 
-              placeholder="Enter customer name" 
-              className="h-11" 
-              required
-            />
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Customer <span className="text-red-500">*</span></Label>
+            <Input value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="Enter customer name" className="h-10" />
           </div>
-          <div className="space-y-2">
-            <Label>BOM Name <span className="text-red-500">*</span></Label>
-            <Input 
-              value={docName} 
-              onChange={(e) => setDocName(e.target.value)} 
-              placeholder="Enter BOM name" 
-              className="h-11" 
-              required
-            />
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">BOM Name <span className="text-red-500">*</span></Label>
+            <Input value={docName} onChange={(e) => setDocName(e.target.value)} placeholder="Enter BOM name" className="h-10" />
           </div>
-          <div className="space-y-2">
-            <Label>FG Store <span className="text-red-500">*</span></Label>
-            <Select value={fgStore} onValueChange={setFgStore}>
-              <SelectTrigger className="h-11">
-                <SelectValue placeholder="Select FG Store">
-                  {warehouses.find(w => w.id.toString() === fgStore)?.name || "Select FG Store"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {loadingWarehouses ? (
-                  <div className="py-4 text-center">
-                    <Loader2 className="h-5 w-5 animate-spin mx-auto" />
-                    <p className="text-sm text-gray-500 mt-2">Loading warehouses...</p>
-                  </div>
-                ) : errorWarehouses ? (
-                  <div className="py-4 text-center text-red-500 text-sm">
-                    Error loading warehouses
-                  </div>
-                ) : warehouses.length === 0 ? (
-                  <div className="py-4 text-center text-gray-500 text-sm">
-                    No warehouses found
-                  </div>
-                ) : (
-                  warehouses.map((warehouse) => (
-                    <SelectItem key={warehouse.id} value={warehouse.id.toString()}>
-                      {warehouse.name} (ID: {warehouse.id})
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">FG Store <span className="text-red-500">*</span></Label>
+            <WarehouseSelect value={fgStore} onChange={setFgStore} placeholder="Select FG Store" />
           </div>
-          <div className="space-y-2">
-            <Label>RM Store <span className="text-red-500">*</span></Label>
-            <Select value={rmStore} onValueChange={setRmStore}>
-              <SelectTrigger className="h-11">
-                <SelectValue placeholder="Select RM Store">
-                  {warehouses.find(w => w.id.toString() === rmStore)?.name || "Select RM Store"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {loadingWarehouses ? (
-                  <div className="py-4 text-center">
-                    <Loader2 className="h-5 w-5 animate-spin mx-auto" />
-                    <p className="text-sm text-gray-500 mt-2">Loading warehouses...</p>
-                  </div>
-                ) : errorWarehouses ? (
-                  <div className="py-4 text-center text-red-500 text-sm">
-                    Error loading warehouses
-                  </div>
-                ) : warehouses.length === 0 ? (
-                  <div className="py-4 text-center text-gray-500 text-sm">
-                    No warehouses found
-                  </div>
-                ) : (
-                  warehouses.map((warehouse) => (
-                    <SelectItem key={warehouse.id} value={warehouse.id.toString()}>
-                      {warehouse.name} (ID: {warehouse.id})
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">RM Store <span className="text-red-500">*</span></Label>
+            <WarehouseSelect value={rmStore} onChange={setRmStore} placeholder="Select RM Store" />
           </div>
-          <div className="space-y-2">
-            <Label>Scrap/Reject Store <span className="text-red-500">*</span></Label>
-            <Select value={scrapStore} onValueChange={setScrapStore}>
-              <SelectTrigger className="h-11">
-                <SelectValue placeholder="Select Scrap Store">
-                  {warehouses.find(w => w.id.toString() === scrapStore)?.name || "Select Scrap Store"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {loadingWarehouses ? (
-                  <div className="py-4 text-center">
-                    <Loader2 className="h-5 w-5 animate-spin mx-auto" />
-                    <p className="text-sm text-gray-500 mt-2">Loading warehouses...</p>
-                  </div>
-                ) : errorWarehouses ? (
-                  <div className="py-4 text-center text-red-500 text-sm">
-                    Error loading warehouses
-                  </div>
-                ) : warehouses.length === 0 ? (
-                  <div className="py-4 text-center text-gray-500 text-sm">
-                    No warehouses found
-                  </div>
-                ) : (
-                  warehouses.map((warehouse) => (
-                    <SelectItem key={warehouse.id} value={warehouse.id.toString()}>
-                      {warehouse.name} (ID: {warehouse.id})
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Scrap/Reject Store <span className="text-red-500">*</span></Label>
+            <WarehouseSelect value={scrapStore} onChange={setScrapStore} placeholder="Select Scrap Store" />
           </div>
-          <div className="space-y-2">
-            <Label>Attachments</Label>
-            <Button variant="outline" className="w-full h-11 border-dashed">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Attachments</Label>
+            <Button variant="outline" className="w-full h-10 border-dashed text-sm">
               <Plus className="h-4 w-4 mr-2" /> Add Attachments
             </Button>
           </div>
         </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <Label>Description</Label>
-              <Button variant="ghost" size="sm" onClick={() => setShowDescription(!showDescription)}>
-                <FileText className="h-4 w-4 mr-1" />
-                {showDescription ? "Hide" : "Add"} Description
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <Label className="text-xs font-medium">Description</Label>
+              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setShowDescription(!showDescription)}>
+                <FileText className="h-3.5 w-3.5 mr-1" />{showDescription ? "Hide" : "Add"}
               </Button>
             </div>
-            {showDescription && (
-              <Textarea 
-                value={description} 
-                onChange={(e) => setDescription(e.target.value)} 
-                placeholder="Enter BOM description..." 
-                className="min-h-24" 
-              />
-            )}
+            {showDescription && <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="BOM description…" rows={3} />}
           </div>
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <Label>Internal Comments</Label>
-              <Button variant="ghost" size="sm" onClick={() => setShowComments(!showComments)}>
-                <MessageSquare className="h-4 w-4 mr-1" />
-                {showComments ? "Hide" : "Add"} Comments
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <Label className="text-xs font-medium">Internal Comments</Label>
+              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setShowComments(!showComments)}>
+                <MessageSquare className="h-3.5 w-3.5 mr-1" />{showComments ? "Hide" : "Add"}
               </Button>
             </div>
-            {showComments && (
-              <Textarea 
-                value={comments} 
-                onChange={(e) => setComments(e.target.value)} 
-                placeholder="Add internal notes..." 
-                className="min-h-24" 
-              />
-            )}
+            {showComments && <Textarea value={comments} onChange={(e) => setComments(e.target.value)} placeholder="Internal notes…" rows={3} />}
           </div>
         </div>
-        <div className="mt-6 pt-4 border-t text-xs text-gray-500">
-          Last Modified: <span className="font-medium">{new Date().toLocaleDateString('en-GB')} - {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-        </div>
+        <p className="mt-4 pt-3 border-t text-xs text-gray-400">
+          Last Modified: {new Date().toLocaleDateString("en-GB")} {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        </p>
       </div>
 
-      {/* All BOM Levels */}
-      {levels.map((levelData, idx) => (
-        <BOMLevel
-          key={idx}
-          levelIndex={idx}
-          data={levelData}
-          items={items}
-          onUpdate={(updated) => updateLevel(idx, updated)}
-          onDelete={idx > 0 ? () => deleteLevel(idx) : undefined}
-        />
-      ))}
+      {/* ══ BOM Sections ══ */}
+      <div className="border-2 border-gray-200 rounded-xl bg-white shadow-sm overflow-hidden">
 
-      {/* Add New Level */}
-      <div className="flex justify-center py-8">
-        <Button onClick={addNewLevel} size="lg" className="bg-[#105076] hover:bg-[#0d4566] text-white">
-          <Plus className="h-6 w-6 mr-2" /> Add New BOM Level
-        </Button>
+        {/* BOM Summary */}
+        <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggle("bomSummary")}>
+          <h3 className="font-semibold flex items-center gap-2 text-[#105076]">
+            <FileText className="h-5 w-5" /> BOM Summary
+          </h3>
+          {bom.expanded.bomSummary ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
+        </div>
+        {bom.expanded.bomSummary && (
+          <div className="px-6 py-5 border-b bg-gray-50">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { label: "RAW MATERIALS",  count: bom.rawMaterials.filter((r) => r.itemId).length,  color: "blue"   },
+                { label: "ROUTING",        count: bom.routing.length,                               color: "green"  },
+                { label: "FINISHED GOODS", count: bom.finishedGoods.filter((f) => f.itemId).length, color: "purple" },
+                { label: "SCRAP",          count: bom.scrapItems.filter((s) => s.id).length,        color: "orange" },
+              ].map(({ label, count, color }) => (
+                <div key={label} className={`bg-${color}-50 border border-${color}-200 rounded-xl p-4 text-center`}>
+                  <p className={`text-3xl font-bold text-${color}-600`}>{count}</p>
+                  <p className={`text-xs font-semibold text-${color}-700 mt-1`}>{label}</p>
+                  <p className={`text-xs text-${color}-500 mt-0.5`}>{count > 0 ? `${count} item(s)` : "None added"}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Finished Goods */}
+        <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggle("finishedGoods")}>
+          <h3 className="font-semibold flex items-center gap-2 text-[#105076]">
+            <Package className="h-5 w-5 text-green-600" /> Finished Goods
+          </h3>
+          {bom.expanded.finishedGoods ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
+        </div>
+        {bom.expanded.finishedGoods && (
+          <div className="px-6 py-5 border-b bg-gray-50">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-medium text-gray-700">Finished Goods List</span>
+              <Button size="sm" onClick={addFG} className="h-8"><Plus className="h-3.5 w-3.5 mr-1" /> Add Row</Button>
+            </div>
+            <div className="bg-white rounded-lg border overflow-x-auto">
+              <table className="w-full text-sm min-w-[700px]">
+                <thead className="bg-gray-100 border-b">
+                  <tr>
+                    {["#", "Item", "Category", "Qty", "Unit", "Cost %", "Comment", "Alternate", ""].map((h, i) => (
+                      <th key={i} className={`px-3 py-2.5 text-left text-xs font-medium text-gray-600 ${i === 1 ? "min-w-[200px]" : ""}`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {bom.finishedGoods.map((fg, i) => (
+                    <tr key={i} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 text-gray-400 text-xs w-8">{i + 1}</td>
+                      <td className="px-3 py-2 min-w-[200px]">
+                        <ItemSelect value={fg.itemId} onValueChange={(v, d) => updateFG(i, "itemId", v, d)} items={items} placeholder="Select item" />
+                      </td>
+                      <td className="px-3 py-2"><Input value={fg.category} onChange={(e) => updateFG(i, "category", e.target.value)} className="h-8 text-xs w-28" readOnly={!!fg.itemData} /></td>
+                      <td className="px-3 py-2"><Input type="number" value={fg.quantity} onChange={(e) => updateFG(i, "quantity", Number(e.target.value) || 0)} className="h-8 text-xs w-20" min="1" /></td>
+                      <td className="px-3 py-2"><Input value={fg.unit} onChange={(e) => updateFG(i, "unit", e.target.value)} className="h-8 text-xs w-20" readOnly={!!fg.itemData} /></td>
+                      <td className="px-3 py-2"><Input type="number" value={fg.costAllocation} onChange={(e) => updateFG(i, "costAllocation", Number(e.target.value) || 0)} className="h-8 text-xs w-20" min="0" max="100" /></td>
+                      <td className="px-3 py-2"><Input value={fg.comment} onChange={(e) => updateFG(i, "comment", e.target.value)} className="h-8 text-xs w-28" /></td>
+                      <td className="px-3 py-2"><Input value={fg.alternateItems} onChange={(e) => updateFG(i, "alternateItems", e.target.value)} className="h-8 text-xs w-28" /></td>
+                      <td className="px-3 py-2">
+                        {bom.finishedGoods.length > 1 && (
+                          <Button variant="ghost" size="icon" onClick={() => removeFG(i)} className="h-7 w-7">
+                            <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Raw Materials */}
+        <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggle("rawMaterials")}>
+          <h3 className="font-semibold flex items-center gap-2 text-[#105076]">
+            <Package className="h-5 w-5 text-blue-600" /> Raw Materials
+          </h3>
+          {bom.expanded.rawMaterials ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
+        </div>
+        {bom.expanded.rawMaterials && (
+          <div className="px-6 py-5 border-b bg-gray-50">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-medium text-gray-700">Raw Materials Required</span>
+              <Button size="sm" onClick={addRM} className="h-8"><Plus className="h-3.5 w-3.5 mr-1" /> Add Raw Material Row</Button>
+            </div>
+            <div className="bg-white rounded-lg border overflow-x-auto">
+              <table className="w-full text-sm min-w-[750px]">
+                <thead className="bg-gray-100 border-b">
+                  <tr>
+                    <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-600 w-10">#</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-600 min-w-[200px]">Item</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-600">Category</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-600">Qty</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-600">Unit</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-600">Comment</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-600">Alternate</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-600 w-20">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bom.rawMaterials.map((rm, i) => {
+                    const childExpanded = childBOMExpandedSet.has(i);
+                    return (
+                    <React.Fragment key={i}>
+                      {/* Parent RM row */}
+                      <tr className="border-t hover:bg-gray-50">
+                        {/* # column: shows expand/collapse toggle when child BOM is linked */}
+                        <td className="px-3 py-2 w-10">
+                          {rm.childBOM ? (
+                            <button
+                              onClick={() => toggleChildBOMExpanded(i)}
+                              className="flex items-center gap-1 group"
+                              title={childExpanded ? "Collapse child BOM rows" : "Expand child BOM rows"}
+                            >
+                              <div className="w-5 h-5 rounded flex items-center justify-center bg-[#105076] text-white shrink-0">
+                                {childExpanded
+                                  ? <ChevronUp className="h-3 w-3" />
+                                  : <ChevronDown className="h-3 w-3" />}
+                              </div>
+                              <span className="text-xs font-semibold text-gray-700">{i + 1}</span>
+                            </button>
+                          ) : (
+                            <span className="text-xs font-medium text-gray-600">{i + 1}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 min-w-[200px]">
+                          <ItemSelect value={rm.itemId} onValueChange={(v, d) => updateRM(i, "itemId", v, d)} items={items} placeholder="Select item" />
+                        </td>
+                        <td className="px-3 py-2"><Input value={rm.category} onChange={(e) => updateRM(i, "category", e.target.value)} className="h-8 text-xs w-28" readOnly={!!rm.itemData} /></td>
+                        <td className="px-3 py-2"><Input type="number" value={rm.quantity} onChange={(e) => updateRM(i, "quantity", Number(e.target.value) || 0)} className="h-8 text-xs w-20" min="1" /></td>
+                        <td className="px-3 py-2"><Input value={rm.unit} onChange={(e) => updateRM(i, "unit", e.target.value)} className="h-8 text-xs w-20" readOnly={!!rm.itemData} /></td>
+                        <td className="px-3 py-2"><Input value={rm.comment} onChange={(e) => updateRM(i, "comment", e.target.value)} className="h-8 text-xs w-28" /></td>
+                        <td className="px-3 py-2"><Input value={rm.alternateItems} onChange={(e) => updateRM(i, "alternateItems", e.target.value)} className="h-8 text-xs w-28" /></td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1">
+                            <button title="Details" className="h-8 w-8 flex items-center justify-center rounded border border-gray-200 hover:bg-gray-100 text-gray-400">
+                              <svg width="14" height="14" fill="none" viewBox="0 0 24 24">
+                                <path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                              </svg>
+                            </button>
+                            <RawMaterialActionsMenu
+                              onLinkChildBOM={() => openChildBOM(i)}
+                              onRemove={() => removeRM(i)}
+                              hasChildBOM={!!rm.childBOM}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* ── Child BOM header row (BOM badge) — shown when expanded ── */}
+                      {rm.childBOM && childExpanded && (
+                        <tr className="border-t bg-blue-50">
+                          <td colSpan={8} className="px-4 py-1.5">
+                            <div className="flex items-center gap-2">
+                              <Link2 className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                              <span className="text-xs font-semibold text-blue-700">Child BOM:</span>
+                              <span className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded font-medium">
+                                {rm.childBOM.bomNumber}
+                              </span>
+                              <span className="text-xs text-blue-600">{rm.childBOM.bomName}</span>
+                              <button
+                                onClick={() => unlinkChildBOM(i)}
+                                title="Unlink child BOM"
+                                className="ml-auto flex items-center gap-1 text-xs text-red-400 hover:text-red-600 px-2 py-0.5 rounded hover:bg-red-50"
+                              >
+                                <X className="h-3 w-3" /> Unlink
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+
+                      {/* ── Child BOM RM rows — identical layout to parent rows, collapsible ── */}
+                      {rm.childBOM && childExpanded && rm.childBOM.rawMaterials.map((subRM, j) => (
+                        <tr key={`${i}-c-${j}`} className="border-t bg-[#f0f7ff] hover:bg-blue-50/80">
+                          {/* Sub-number: e.g. 1.1, 1.2 — styled like image (orange/salmon badge) */}
+                          <td className="px-3 py-2 w-10">
+                            <div className="flex items-center justify-center">
+                              <span
+                                className="text-xs font-semibold text-white px-1.5 py-0.5 rounded min-w-[28px] text-center"
+                                style={{ backgroundColor: "#e8936a" }}
+                              >
+                                {i + 1}.{j + 1}
+                              </span>
+                            </div>
+                          </td>
+                          {/* ID column — read-only styled like a select */}
+                          <td className="px-3 py-2 min-w-[200px]">
+                            <div className="h-8 flex items-center border border-gray-200 rounded px-3 bg-gray-50 text-xs font-medium text-gray-700 w-full">
+                              {subRM.sku || "—"}
+                            </div>
+                          </td>
+                          {/* Name column — read-only styled like a select */}
+                          <td className="px-3 py-2">
+                            <div className="h-8 flex items-center border border-gray-200 rounded px-3 bg-gray-50 text-xs text-gray-700 w-28 truncate">
+                              {subRM.name || "—"}
+                            </div>
+                          </td>
+                          {/* Category */}
+                          <td className="px-3 py-2">
+                            <Input value={subRM.category || ""} readOnly className="h-8 text-xs w-20 bg-gray-50" />
+                          </td>
+                          {/* Quantity */}
+                          <td className="px-3 py-2">
+                            <Input value={subRM.quantity} readOnly className="h-8 text-xs w-20 bg-gray-50 text-right" />
+                          </td>
+                          {/* Unit */}
+                          <td className="px-3 py-2">
+                            <Input value={subRM.unit || ""} readOnly className="h-8 text-xs w-20 bg-gray-50" />
+                          </td>
+                          {/* Comment */}
+                          <td className="px-3 py-2">
+                            <Input value={subRM.comment || ""} readOnly className="h-8 text-xs w-28 bg-gray-50" />
+                          </td>
+                          {/* Actions — empty for child rows */}
+                          <td className="px-3 py-2">
+                            <div className="h-8 w-8" />
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Routing */}
+        <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggle("routing")}>
+          <h3 className="font-semibold flex items-center gap-2 text-[#105076]">
+            <GitBranch className="h-5 w-5 text-purple-600" /> Routing
+          </h3>
+          {bom.expanded.routing ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
+        </div>
+        {bom.expanded.routing && (
+          <div className="px-6 py-5 border-b bg-gray-50">
+            <div className="mb-4"><RoutingDialog onSelect={addRouting} /></div>
+            {bom.routing.length > 0 && (
+              <div className="bg-white rounded-lg border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-100 border-b">
+                    <tr>
+                      {["#", "Routing Number", "Name", "Comment", ""].map((h) => (
+                        <th key={h} className="px-3 py-2.5 text-left text-xs font-medium text-gray-600">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {bom.routing.map((r, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="px-3 py-2 text-gray-400 text-xs">{i + 1}</td>
+                        <td className="px-3 py-2 font-medium text-sm">{r.routingNumber}</td>
+                        <td className="px-3 py-2 text-gray-600 text-sm">{r.routingName}</td>
+                        <td className="px-3 py-2">
+                          <Input
+                            value={r.comment}
+                            onChange={(e) => {
+                              const upd = [...bom.routing];
+                              upd[i] = { ...upd[i], comment: e.target.value };
+                              setBom((p) => ({ ...p, routing: upd }));
+                            }}
+                            className="h-8 text-xs"
+                            placeholder="Add comment"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <Button variant="ghost" size="icon" onClick={() => removeRouting(i)} className="h-7 w-7">
+                            <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Scrap / By-Products */}
+        <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggle("scrap")}>
+          <h3 className="font-semibold flex items-center gap-2 text-[#105076]">
+            <Trash2 className="h-5 w-5 text-orange-500" /> Scrap / By-Products
+          </h3>
+          {bom.expanded.scrap ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
+        </div>
+        {bom.expanded.scrap && (
+          <div className="px-6 py-5 border-b bg-gray-50">
+            <div className="bg-white rounded-lg border overflow-x-auto">
+              <table className="w-full text-sm min-w-[700px]">
+                <thead style={{ backgroundColor: "#105076" }}>
+                  <tr>
+                    {["#", "Item", "Name", "Category", "Quantity", "Unit", "Cost Alloc (%)", "Comment", "Actions"].map((h) => (
+                      <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-white">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {bom.scrapItems.length === 0 ? (
+                    <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400 text-sm">No data available</td></tr>
+                  ) : (
+                    bom.scrapItems.map((s, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 text-gray-400 text-xs">{i + 1}</td>
+                        <td className="px-4 py-2 min-w-[180px]">
+                          <ItemSelect value={s.id} onValueChange={(v, d) => updateScrap(i, "id", v, d)} items={items} placeholder="Select item" />
+                        </td>
+                        <td className="px-4 py-2"><Input value={s.name} onChange={(e) => updateScrap(i, "name", e.target.value)} className="h-8 text-xs w-24" readOnly={!!s.itemData} /></td>
+                        <td className="px-4 py-2"><Input value={s.category} onChange={(e) => updateScrap(i, "category", e.target.value)} className="h-8 text-xs w-24" readOnly={!!s.itemData} /></td>
+                        <td className="px-4 py-2"><Input type="number" value={s.quantity} onChange={(e) => updateScrap(i, "quantity", Number(e.target.value) || 0)} className="h-8 text-xs w-20" min="0" /></td>
+                        <td className="px-4 py-2"><Input value={s.unit} onChange={(e) => updateScrap(i, "unit", e.target.value)} className="h-8 text-xs w-20" readOnly={!!s.itemData} /></td>
+                        <td className="px-4 py-2"><Input type="number" value={s.costAllocation} onChange={(e) => updateScrap(i, "costAllocation", Number(e.target.value) || 0)} className="h-8 text-xs w-20" min="0" max="100" /></td>
+                        <td className="px-4 py-2"><Input value={s.comment} onChange={(e) => updateScrap(i, "comment", e.target.value)} className="h-8 text-xs w-28" /></td>
+                        <td className="px-4 py-2">
+                          <Button variant="ghost" size="icon" onClick={() => removeScrap(i)} className="h-7 w-7 hover:bg-red-50">
+                            <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-3">
+              <Button onClick={addScrap} size="sm" className="bg-[#105076] hover:bg-[#0d4566]">
+                <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Scrap Row
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Other Charges */}
+        <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50" onClick={() => toggle("otherCharges")}>
+          <h3 className="font-semibold flex items-center gap-2 text-[#105076]">
+            <DollarSign className="h-5 w-5 text-teal-600" /> Other Charges
+          </h3>
+          {bom.expanded.otherCharges ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
+        </div>
+        {bom.expanded.otherCharges && (
+          <div className="px-6 py-5">
+            <div className="space-y-2">
+              {bom.otherCharges.map((c, i) => (
+                <div key={i} className="grid grid-cols-4 gap-3 p-3 bg-gray-50 rounded-lg items-center">
+                  <span className="text-sm font-medium text-gray-700">{c.classification}</span>
+                  <span className="text-xs text-gray-500">{c.account}</span>
+                  <Input type="number" value={c.amount} onChange={(e) => updateCharge(i, "amount", Number(e.target.value) || 0)} className="h-9 text-sm" placeholder="Amount" min="0" />
+                  <Input value={c.comment} onChange={(e) => updateCharge(i, "comment", e.target.value)} placeholder="Note…" className="h-9 text-sm" />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Footer */}
-      <div className="sticky bottom-0 border-t bg-white shadow-lg mt-8">
-        <div className="max-w-8xl mx-auto px-6 py-4 flex justify-end gap-4">
-          <Button 
-            variant="outline" 
-            onClick={handleSaveDraft} 
-            disabled={loading}
-          >
+      <div className="sticky bottom-0 border-t bg-white shadow-lg mt-8 z-10">
+        <div className="px-6 py-4 flex justify-end gap-3">
+          <Button variant="outline" onClick={handleSaveDraft} disabled={loading} className="min-w-[120px]">
             {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
             Save to Draft
           </Button>
-          <Button 
-            onClick={handleSaveBOM} 
-            className="bg-[#105076] hover:bg-[#0d4566]" 
-            disabled={loading}
-          >
+          <Button onClick={handleSaveBOM} disabled={loading} className="bg-[#105076] hover:bg-[#0d4566] min-w-[120px]">
             {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
             Save BOM
           </Button>
         </div>
       </div>
+
+      {/* Link Child BOM Dialog */}
+      <LinkChildBOMDialog
+        open={childBOMDialogOpen}
+        onClose={() => { setChildBOMDialogOpen(false); setChildBOMTargetIdx(null); }}
+        onSave={handleChildBOMSaveWithExpand}
+        currentChildBOM={childBOMTargetIdx !== null ? bom.rawMaterials[childBOMTargetIdx]?.childBOM : null}
+      />
+
+      {/* Success Dialog */}
+      <Dialog open={successDialogOpen} onOpenChange={setSuccessDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-green-600">🎉 BOM Created Successfully</DialogTitle>
+            <DialogDescription>
+              Your Bill of Material has been saved.<br />
+              <span className="font-semibold font-mono">Document #: {createdDocNumber}</span>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end mt-4">
+            <Button onClick={() => { setSuccessDialogOpen(false); navigate("/production/bom"); }} className="bg-[#105076] hover:bg-[#0d4566]">
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

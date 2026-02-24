@@ -869,7 +869,7 @@ const PurchaseInvoice: React.FC = () => {
 
               <div className="space-y-1">
                 <Label className={labelClasses} htmlFor="deliveryNote">
-                  Note
+                  Note 
                 </Label>
                 <Textarea
                   className={`${inputClasses} max-h-32`}

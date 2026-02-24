@@ -1,20 +1,29 @@
 import React, { useEffect, useState } from "react";
 import { ColumnDef } from "@tanstack/react-table";
 import UniversalTable from "@/components/app/tables";
-import { userService, TeamResponse } from "../../services/userService"; // Updated import
+import { userService, TeamResponse } from "../../services/userService";
 import ErrorToast from "@/components/app/toasts/ErrorToast";
 import { Edit, Trash2, Shield, Radio, Plus } from "lucide-react";
 import AddTeamModal from "@/components/app/AddTeamModal";
+import PermissionsModal from "@/components/app/modals/PermissionModal";
 
 const TeamsPage: React.FC = () => {
-  const [teams, setTeams] = useState<TeamResponse[]>([]); // Use TeamResponse type
+  const [teams, setTeams] = useState<TeamResponse[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editTeam, setEditTeam] = useState<TeamResponse | null>(null);
+  const [showPermissionsModal, setShowPermissionsModal] = useState(false);
+  const [selectedTeamForPermissions, setSelectedTeamForPermissions] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
+
+  console.log("TeamsPage rendered", teams);
 
   const fetchTeams = async () => {
     setIsLoading(true);
     try {
-      const res = await userService.getAllTeams(); // Use userService instead of direct get
+      const res = await userService.getAllTeams();
       if (res?.status) {
         setTeams(res.data || []);
       }
@@ -34,49 +43,65 @@ const TeamsPage: React.FC = () => {
 
   const columns: ColumnDef<TeamResponse>[] = [
     {
-    header: "Team",
-    accessorKey: "name",
-  },
-  {
-    header: "Description",
-    accessorKey: "description",
-  },
-  {
-    header: "Permissions",
-    accessorKey: "permissions",
-    cell: ({ row }) => {
-      const permissions = row.original.permissions;
-      if (!permissions) return <span className="text-gray-400">-</span>;
-      
-      const moduleCount = Object.keys(permissions).length;
-      return (
-        <div className="flex items-center gap-1">
-          <span className="text-sm text-gray-700">{moduleCount} module{moduleCount !== 1 ? 's' : ''}</span>
-          <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-        </div>
-      );
+      header: "Team",
+      accessorKey: "name",
     },
-  },
+    {
+      header: "Description",
+      accessorKey: "description",
+    },
+    {
+      header: "Permissions",
+      accessorKey: "permissions",
+      cell: ({ row }) => {
+        const permissions = row.original.permissions;
+        if (!permissions || Object.keys(permissions).length === 0) {
+          return <span className="text-gray-400">No permissions</span>;
+        }
+        
+        const moduleCount = Object.keys(permissions).length;
+        return (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-700">
+              {moduleCount} module{moduleCount !== 1 ? 's' : ''}
+            </span>
+            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+          </div>
+        );
+      },
+    },
     {
       header: "Users",
-      accessorKey: "usersCount",
-      cell: ({ row }) => row.getValue("usersCount") || "-",
+      accessorKey: "userCount", 
+      cell: ({ row }) => {
+        const userCount = row.original.userCount;
+        return userCount !== undefined ? userCount : "-";
+      },
     },
     {
       header: "Actions",
-      accessorKey: "actions",
       cell: ({ row }) => (
         <div className="flex gap-2">
           {/* Edit Team */}
-          <Edit className="w-4 h-4 text-blue-600 cursor-pointer" />
+          <Edit
+            className="w-4 h-4 text-blue-600 cursor-pointer"
+            onClick={() => {
+              setEditTeam(row.original);
+              setShowAddModal(true);
+            }}
+          />
 
           {/* Permissions */}
-          <Shield className="w-4 h-4 text-blue-600 cursor-pointer" />
-
-          {/* PRO Badge - only show if needed */}
-          {/* <span className="border border-yellow-500 text-yellow-600 text-[10px] px-2 py-[1px] rounded">
-            PRO
-          </span> */}
+          <Shield 
+            className="w-4 h-4 text-blue-600 cursor-pointer" 
+            onClick={() => {
+              setSelectedTeamForPermissions({
+                id: row.original.id,
+                name: row.original.name,
+              });
+              setShowPermissionsModal(true);
+            }}
+          />
 
           {/* Broadcast / Webhooks */}
           <Radio className="w-4 h-4 text-blue-600 cursor-pointer" />
@@ -108,7 +133,7 @@ const TeamsPage: React.FC = () => {
       {/* Team Search */}
       <div className="flex items-end">
         <input
-          placeholder="Search"
+          placeholder="Search teams..."
           className="h-8 w-[200px] px-3 rounded-md border border-gray-300 text-sm"
           value={(table.getColumn("name")?.getFilterValue() as string) ?? ""}
           onChange={(e) =>
@@ -120,7 +145,7 @@ const TeamsPage: React.FC = () => {
       {/* Description Search */}
       <div className="flex items-end">
         <input
-          placeholder="Search"
+          placeholder="Search descriptions..."
           className="h-8 w-[250px] px-3 rounded-md border border-gray-300 text-sm"
           value={
             (table.getColumn("description")?.getFilterValue() as string) ?? ""
@@ -143,7 +168,7 @@ const TeamsPage: React.FC = () => {
         </div>
 
         <button
-          className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition-colors"
+          className="flex items-center gap-2 bg-[#7047EB] font-light text-sm hover:bg-[#7047EB] text-white px-4 py-2 rounded-md transition-colors"
           onClick={() => setShowAddModal(true)}
         >
           <Plus className="w-4 h-4" /> Add Team
@@ -162,12 +187,30 @@ const TeamsPage: React.FC = () => {
         className="bg-white rounded-lg shadow-sm"
       />
 
-      {/* Add Team Modal */}
+      {/* Add/Edit Team Modal */}
       {showAddModal && (
         <AddTeamModal
           isOpen={showAddModal}
-          onClose={() => setShowAddModal(false)}
+          team={editTeam}
+          onClose={() => {
+            setShowAddModal(false);
+            setEditTeam(null);
+          }}
           onTeamAdded={fetchTeams}
+        />
+      )}
+
+      {/* Permissions Management Modal */}
+      {showPermissionsModal && selectedTeamForPermissions && (
+        <PermissionsModal
+          isOpen={showPermissionsModal}
+          onClose={() => {
+            setShowPermissionsModal(false);
+            setSelectedTeamForPermissions(null);
+          }}
+          teamId={selectedTeamForPermissions.id}
+          teamName={selectedTeamForPermissions.name}
+          onPermissionsUpdated={fetchTeams}
         />
       )}
     </div>

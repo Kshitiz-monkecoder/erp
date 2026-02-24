@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {get} from "../../../lib/apiService"
+import { get } from "../../../lib/apiService";
 
 interface IModalProps {
   isOpen: boolean;
@@ -19,7 +19,6 @@ interface IModalProps {
   onSelectBuyer?: (buyer: any) => void; // for ShowBuyers
   onSelectSupplier?: (supplier: any) => void; // for ShowSuppliers
 }
-
 
 const ShowSuppliers: React.FC<IModalProps> = ({
   isOpen,
@@ -29,26 +28,31 @@ const ShowSuppliers: React.FC<IModalProps> = ({
   const modalRef = useRef<HTMLDivElement>(null);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>("");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   useEffect(() => {
     const fetchSuppliers = async () => {
+      if (!isOpen) return;
+      
+      setIsLoading(true);
       try {
-       
-        const data = await get("/client");
-
-        const filteredSuppliers = (data.data || []).filter(
+        const response = await get("/client");
+        
+        // Access response.data.list instead of response.data
+        const clients = response?.data?.list || [];
+        
+        const filteredSuppliers = clients.filter(
           (client: any) =>
             client.clientType === "Supplier" || client.clientType === "Both",
         );
-
+        
         setSuppliers(filteredSuppliers);
 
         // Set initial selected supplier after suppliers are loaded
         const savedSupplier = localStorage.getItem("selectedSupplier");
-        if (savedSupplier) {
+        if (savedSupplier && filteredSuppliers.length > 0) {
           try {
             const parsedSupplier = JSON.parse(savedSupplier);
-            console.log("Parsed supplier from localStorage:", parsedSupplier);
 
             // Check if this supplier exists in the fetched suppliers list
             const supplierExists = filteredSuppliers.find(
@@ -56,10 +60,6 @@ const ShowSuppliers: React.FC<IModalProps> = ({
             );
             if (supplierExists) {
               setSelectedSupplierId(String(parsedSupplier.id));
-              console.log(
-                "Setting selected supplier ID:",
-                String(parsedSupplier.id),
-              );
             }
           } catch (error) {
             console.error("Error parsing saved supplier:", error);
@@ -67,10 +67,13 @@ const ShowSuppliers: React.FC<IModalProps> = ({
         }
       } catch (error) {
         console.error("Error fetching suppliers:", error);
+        setSuppliers([]);
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    if (isOpen) fetchSuppliers();
+    fetchSuppliers();
   }, [isOpen]);
 
   useEffect(() => {
@@ -80,8 +83,7 @@ const ShowSuppliers: React.FC<IModalProps> = ({
         "selectedSupplier",
         JSON.stringify(selectedSupplier),
       );
-      console.log("Selected supplier set in localStorage:", selectedSupplier);
-      onSelectSupplier?.(selectedSupplier); // ✅ Notify parent
+      onSelectSupplier?.(selectedSupplier);
     }
   }, [selectedSupplierId, suppliers, onSelectSupplier]);
 
@@ -115,26 +117,36 @@ const ShowSuppliers: React.FC<IModalProps> = ({
               </Link>
             </div>
 
-            <Select
-              value={selectedSupplierId}
-              onValueChange={(value) => {
-                console.log("Selected supplier ID:", value);
-                setSelectedSupplierId(value);
-              }}
-            >
-              <SelectTrigger className={`${inputClasses} w-full`}>
-                <SelectValue placeholder="Select a Supplier" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {(suppliers || []).map((supplier) => (
-                    <SelectItem key={supplier.id} value={String(supplier.id)}>
-                      {supplier.name}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+            {isLoading ? (
+              <div className="py-3 text-center text-gray-500">
+                Loading suppliers...
+              </div>
+            ) : suppliers.length === 0 ? (
+              <div className="py-3 text-center text-gray-500">
+                No suppliers found. Please add a supplier first.
+              </div>
+            ) : (
+              <Select
+                value={selectedSupplierId}
+                onValueChange={(value) => {
+                  setSelectedSupplierId(value);
+                }}
+              >
+                <SelectTrigger className={`${inputClasses} w-full`}>
+                  <SelectValue placeholder="Select a Supplier" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {suppliers.map((supplier) => (
+                      <SelectItem key={supplier.id} value={String(supplier.id)}>
+                        {/* Show only supplier name, not company name */}
+                        {supplier.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
       </div>

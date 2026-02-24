@@ -1,6 +1,6 @@
 // src/components/app/tables/production/create-production-order.tsx
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -20,8 +20,6 @@ import {
 } from "@/components/ui/table";
 import {
   ArrowLeft,
-  Plus,
-  Trash2,
   Search,
   Loader2,
 } from "lucide-react";
@@ -72,6 +70,51 @@ interface ProductionOrderItem {
   expectedProcessCompletionDate: string;
 }
 
+// Work Order Types from API
+interface Buyer {
+  id: number;
+  name: string;
+  email: string;
+  clientType: string;
+  companyName: string;
+  companyEmail: string;
+}
+
+interface OrderItemDetail {
+  item?: {
+    id: number;
+    sku: string;
+    name: string;
+    currentStock: string;
+    unit?: {
+      name: string;
+    };
+  };
+  hsn: string;
+  quantity: string;
+  unitPrice: string;
+  totalPrice: string;
+  tax: string;
+  id: number;
+}
+
+interface WorkOrderData {
+  id: number;
+  documentNumber: string;
+  buyer: Buyer;
+  items: OrderItemDetail[];
+  warehouse: Warehouse;
+  deliveryDate: string;
+  documentDate: string;
+  poNumber: string;
+  paymentType: string;
+  status: string;
+}
+
+interface LocationState {
+  workOrderData?: WorkOrderData;
+}
+
 // -------------------- APIS --------------------
 const inventoryAPI = {
   getItems: () => get("/inventory/item"),
@@ -88,62 +131,132 @@ const bomAPI = {
 // -------------------- COMPONENT --------------------
 const CreateProductionOrder: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const locationState = location.state as LocationState;
+  
+  const workOrderData = locationState?.workOrderData;
 
-  // LOADING STATES
   const [loadingItems, setLoadingItems] = useState(false);
   const [loadingBOMs, setLoadingBOMs] = useState(false);
   const [creatingProcess, setCreatingProcess] = useState(false);
   
-  // DATA STATES
   const [items, setItems] = useState<Item[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [boms, setBoms] = useState<BOMItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchBomQuery, setSearchBomQuery] = useState("");
 
-  // 🔹 Row-wise BOMs and loading (ADDED)
   const [rowBoms, setRowBoms] = useState<Record<number, BOMItem[]>>({});
   const [rowLoadingBOMs, setRowLoadingBOMs] = useState<Record<number, boolean>>({});
 
-  // PRODUCTION ITEMS
-  const [productionItems, setProductionItems] = useState<ProductionOrderItem[]>([
-    {
-      itemId: "",
-      itemName: "",
-      documentSeries: "",
-      bom: "",
-      currentStock: "",
-      quantity: "",
-      uom: "",
-      referenceNumber: "",
-      fgStore: "",
-      rmStore: "",
-      scrapStore: "",
-      useSameStore: false,
-      orderDeliveryDate: "",
-      expectedProcessCompletionDate: "",
-    },
-  ]);
+  // Only 1 row — no add row button
+  const [productionItems, setProductionItems] = useState<ProductionOrderItem[]>(() => {
+    if (workOrderData?.items && workOrderData.items.length > 0) {
+      return workOrderData.items.map((orderItem) => ({
+        itemId: orderItem.item?.id?.toString() || "",
+        itemName: orderItem.item?.name || "",
+        documentSeries: workOrderData.documentNumber || "",
+        bom: "",
+        currentStock: orderItem.item?.currentStock || "",
+        quantity: orderItem.quantity || "",
+        uom: orderItem.item?.unit?.name || "",
+        referenceNumber: workOrderData.documentNumber || "",
+        fgStore: workOrderData.warehouse?.name || "",
+        rmStore: workOrderData.warehouse?.name || "",
+        scrapStore: workOrderData.warehouse?.name || "",
+        useSameStore: true,
+        orderDeliveryDate: workOrderData.deliveryDate || "",
+        expectedProcessCompletionDate: workOrderData.deliveryDate || "",
+      }));
+    } else {
+      return [{
+        itemId: "",
+        itemName: "",
+        documentSeries: "",
+        bom: "",
+        currentStock: "",
+        quantity: "",
+        uom: "",
+        referenceNumber: "",
+        fgStore: "",
+        rmStore: "",
+        scrapStore: "",
+        useSameStore: false,
+        orderDeliveryDate: "",
+        expectedProcessCompletionDate: "",
+      }];
+    }
+  });
 
-  // -------------------- FETCH ITEMS --------------------
   useEffect(() => {
-  const loadItems = async () => {
+    if (workOrderData) {
+      document.title = `Create Production Order - ${workOrderData.documentNumber}`;
+    }
+  }, [workOrderData]);
+
+  useEffect(() => {
+    const loadItems = async () => {
+      try {
+        setLoadingItems(true);
+        const response = await inventoryAPI.getItems();
+
+        if (response?.status && Array.isArray(response.data)) {
+          setItems(response.data);
+          
+          if (workOrderData?.items && productionItems.length > 0) {
+            const updatedItems = [...productionItems];
+            
+            workOrderData.items.forEach((orderItem, index) => {
+              if (orderItem.item) {
+                const foundItem = response.data.find((item: Item) => item.id === orderItem.item?.id);
+                if (foundItem) {
+                  updatedItems[index] = {
+                    ...updatedItems[index],
+                    itemId: foundItem.id.toString(),
+                    itemName: foundItem.name,
+                    currentStock: foundItem.currentStock,
+                    uom: foundItem.unit?.name || "",
+                  };
+                  fetchBOMsForItem(foundItem.id, index);
+                }
+              }
+            });
+            
+            setProductionItems(updatedItems);
+          }
+        }
+      } catch (error) {
+        console.error("Error loading items:", error);
+        toast.error("Failed to load items");
+      } finally {
+        setLoadingItems(false);
+      }
+    };
+
+    loadItems();
+  }, [workOrderData]);
+
+  const fetchBOMsForItem = async (itemId: number, rowIndex: number) => {
     try {
-      setLoadingItems(true);
-      const response = await inventoryAPI.getItems();
+      setRowLoadingBOMs(prev => ({ ...prev, [rowIndex]: true }));
+      const response = await productionAPI.getBOMByFinishedGoodItem(itemId);
 
       if (response?.status && Array.isArray(response.data)) {
-        setItems(response.data);
+        setRowBoms(prev => ({
+          ...prev,
+          [rowIndex]: response.data,
+        }));
+      } else {
+        setRowBoms(prev => ({ ...prev, [rowIndex]: [] }));
       }
+    } catch (err) {
+      console.error("Error fetching BOMs for item:", err);
+      setRowBoms(prev => ({ ...prev, [rowIndex]: [] }));
     } finally {
-      setLoadingItems(false);
+      setRowLoadingBOMs(prev => ({ ...prev, [rowIndex]: false }));
     }
   };
 
-  loadItems();
-}, []);
-
-  // -------------------- FETCH WAREHOUSES --------------------
   useEffect(() => {
     const loadWarehouses = async () => {
       try {
@@ -155,14 +268,12 @@ const CreateProductionOrder: React.FC = () => {
       } catch (err) {
         console.log("Warehouse Error:", err);
         toast.error("Failed to load warehouses");
-      } finally {
       }
     };
 
     loadWarehouses();
   }, []);
 
-  // -------------------- FETCH ALL BOMS (still kept, not removed) --------------------
   useEffect(() => {
     const loadBOMs = async () => {
       try {
@@ -183,52 +294,18 @@ const CreateProductionOrder: React.FC = () => {
     loadBOMs();
   }, []);
 
-  // -------------------- FILTER ITEMS --------------------
   const filteredItems = items.filter(
     (item) =>
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.sku.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // -------------------- FILTER BOMS (global, used as fallback) --------------------
   const filteredBoms = boms.filter(
     (bom) =>
       bom.docNumber.toLowerCase().includes(searchBomQuery.toLowerCase()) ||
       bom.docName.toLowerCase().includes(searchBomQuery.toLowerCase())
   );
 
-  // -------------------- ADD ROW --------------------
-  const addItemRow = () => {
-    setProductionItems([
-      ...productionItems,
-      {
-        itemId: "",
-        itemName: "",
-        documentSeries: "",
-        bom: "",
-        currentStock: "",
-        quantity: "",
-        uom: "",
-        referenceNumber: "",
-        fgStore: "",
-        rmStore: "",
-        scrapStore: "",
-        useSameStore: false,
-        orderDeliveryDate: "",
-        expectedProcessCompletionDate: "",
-      },
-    ]);
-  };
-
-  // -------------------- REMOVE ROW --------------------
-  const removeItemRow = (index: number) => {
-    if (productionItems.length === 1) return;
-    const updated = [...productionItems];
-    updated.splice(index, 1);
-    setProductionItems(updated);
-  };
-
-  // -------------------- SELECT ITEM + FETCH BOMs FOR THAT ITEM --------------------
   const handleItemSelect = async (index: number, itemId: string) => {
     const selected = items.find((i) => i.id.toString() === itemId);
     if (!selected) return;
@@ -240,37 +317,13 @@ const CreateProductionOrder: React.FC = () => {
       itemName: selected.name,
       currentStock: selected.currentStock,
       uom: selected.unit?.name || "",
-      bom: "", // reset BOM when item changes
+      bom: "",
     };
 
     setProductionItems(updated);
-
-    // 🔹 Fetch BOMs for this specific finished goods item
-    try {
-      setRowLoadingBOMs((prev) => ({ ...prev, [index]: true }));
-      const response = await productionAPI.getBOMByFinishedGoodItem(
-        Number(itemId)
-      );
-
-      if (response?.status && Array.isArray(response.data)) {
-        setRowBoms((prev) => ({
-          ...prev,
-          [index]: response.data,
-        }));
-      } else {
-        setRowBoms((prev) => ({ ...prev, [index]: [] }));
-        toast.error("No BOMs found for selected item");
-      }
-    } catch (err) {
-      console.error("Error fetching BOMs for item:", err);
-      setRowBoms((prev) => ({ ...prev, [index]: [] }));
-      toast.error("Failed to load BOMs for selected item");
-    } finally {
-      setRowLoadingBOMs((prev) => ({ ...prev, [index]: false }));
-    }
+    await fetchBOMsForItem(selected.id, index);
   };
 
-  // -------------------- UPDATE FIELD --------------------
   const updateItemField = (
     index: number,
     field: keyof ProductionOrderItem,
@@ -278,7 +331,16 @@ const CreateProductionOrder: React.FC = () => {
   ) => {
     const updated = [...productionItems];
 
-    // same store logic
+    if (field === "quantity") {
+      const qty = parseFloat(value) || 0;
+      const stock = parseFloat(updated[index].currentStock) || 0;
+
+      if (qty > stock) {
+        toast.error(`Quantity (${qty}) cannot exceed available stock (${stock})`);
+        return; // do not update
+      }
+    }
+
     if (field === "useSameStore" && value === true) {
       const storeValue =
         updated[index].fgStore ||
@@ -309,28 +371,24 @@ const CreateProductionOrder: React.FC = () => {
     setProductionItems(updated);
   };
 
-  // Get warehouse ID by name
   const getWarehouseIdByName = (warehouseName: string): number | undefined => {
     const warehouse = warehouses.find(w => w.name === warehouseName);
     return warehouse?.id;
   };
 
-  // -------------------- CREATE PRODUCTION PROCESS --------------------
   const handleCreateProduction = async () => {
-    // Validate required fields
     const invalidItems = productionItems.some(
       (item) => !item.itemId || !item.quantity || !item.bom
     );
 
     if (invalidItems) {
-      toast.error("Please fill all required fields (Item, Quantity, and BOM) for all rows");
+      toast.error("Please fill all required fields (Item, Quantity, and BOM)");
       return;
     }
 
     try {
       setCreatingProcess(true);
 
-      // Create production process for each item
       const createdProcesses: Array<{
         processId: number;
         docNumber: string;
@@ -342,7 +400,6 @@ const CreateProductionOrder: React.FC = () => {
           continue;
         }
 
-        // Get BOM ID from the selected BOM string (format: "ID: 123 - BOM0001") OR direct id
         const bomMatch = item.bom.match(/ID:\s*(\d+)/);
         const bomId = bomMatch ? parseInt(bomMatch[1]) : parseInt(item.bom);
 
@@ -350,40 +407,22 @@ const CreateProductionOrder: React.FC = () => {
           throw new Error(`Invalid BOM ID for item: ${item.itemName}`);
         }
 
-        // Get warehouse IDs
         const fgWarehouseId = getWarehouseIdByName(item.fgStore);
         const rmWarehouseId = getWarehouseIdByName(item.rmStore);
         const scrapWarehouseId = getWarehouseIdByName(item.scrapStore);
 
-        // Prepare the payload with only the required and allowed fields
         const payload: any = {
           bomId: bomId,
           quantity: parseFloat(item.quantity) || 1,
         };
 
-        // Add optional fields if they exist - using field names as you specified
-        if (rmWarehouseId) {
-          payload.rmStore = rmWarehouseId;
-        }
-        
-        if (fgWarehouseId) {
-          payload.fgStore = fgWarehouseId;
-        }
-        
-        if (scrapWarehouseId) {
-          payload.scrapStore = scrapWarehouseId;
-        }
-        
-        if (item.orderDeliveryDate) {
-          payload.orderDeliveryDate = item.orderDeliveryDate;
-        }
-        
-        if (item.expectedProcessCompletionDate) {
-          payload.expectedCompletionDate = item.expectedProcessCompletionDate;
-        }
+        if (rmWarehouseId) payload.rmStore = rmWarehouseId;
+        if (fgWarehouseId) payload.fgStore = fgWarehouseId;
+        if (scrapWarehouseId) payload.scrapStore = scrapWarehouseId;
+        if (item.orderDeliveryDate) payload.orderDeliveryDate = item.orderDeliveryDate;
+        if (item.expectedProcessCompletionDate) payload.expectedCompletionDate = item.expectedProcessCompletionDate;
 
-        // Create production process from BOM with the payload
-        const createResponse = await productionAPI.createProductionFromBOM(payload as any);
+        const createResponse = await productionAPI.createProductionFromBOM(payload);
 
         if (!createResponse.status) {
           throw new Error(createResponse.message || `Failed to create process for ${item.itemName}`);
@@ -395,14 +434,12 @@ const CreateProductionOrder: React.FC = () => {
           itemName: item.itemName
         });
 
-        // Show success message for each created process
         toast.success(`Created process ${createResponse.data.docNumber} for ${item.itemName}`);
       }
 
       if (createdProcesses.length > 0) {
         toast.success(`Successfully created ${createdProcesses.length} production process(es)`);
         
-        // Navigate to the first created process
         if (createdProcesses[0]) {
           setTimeout(() => {
             navigate(`/production/process-details?processId=${createdProcesses[0].processId}`);
@@ -422,13 +459,6 @@ const CreateProductionOrder: React.FC = () => {
     }
   };
 
-  // -------------------- GENERATE ORDER NUMBER --------------------
-  // const generateOrderNumber = () => {
-  //   const timestamp = new Date().getTime();
-  //   return `PO${timestamp.toString().slice(-6)}`;
-  // };
-
-  // -------------------- ITEM SELECT DROPDOWN --------------------
   const ItemSelect = ({
     value,
     onChange,
@@ -482,7 +512,6 @@ const CreateProductionOrder: React.FC = () => {
     );
   };
 
-  // -------------------- BOM SELECT DROPDOWN --------------------
   const BOMSelect = ({
     value,
     onChange,
@@ -495,7 +524,6 @@ const CreateProductionOrder: React.FC = () => {
     const rowSpecificBoms = rowBoms[rowIndex] || [];
     const hasItemSelected = !!productionItems[rowIndex]?.itemId;
 
-    // If row has its own BOMs, filter those; else fallback to global filteredBoms
     const effectiveList =
       rowSpecificBoms.length > 0
         ? rowSpecificBoms.filter(
@@ -550,16 +578,6 @@ const CreateProductionOrder: React.FC = () => {
               >
                 <div className="flex flex-col">
                   <span className="font-medium">{bom.docNumber}</span>
-                  {/* <span className="text-xs text-gray-500">{bom.docName}</span>
-                  <span
-                    className={`text-xs ${
-                      bom.status === "published"
-                        ? "text-green-600"
-                        : "text-yellow-600"
-                    }`}
-                  >
-                    Status: {bom.status}
-                  </span> */}
                 </div>
               </SelectItem>
             ))
@@ -569,10 +587,8 @@ const CreateProductionOrder: React.FC = () => {
     );
   };
 
-  // -------------------- UI --------------------
   return (
     <div className="p-6 max-w-8xl mx-auto">
-      {/* HEADER */}
       <div className="flex items-center gap-4 mb-6">
         <Button variant="ghost" onClick={() => navigate(-1)}>
           <ArrowLeft />
@@ -582,24 +598,11 @@ const CreateProductionOrder: React.FC = () => {
             Create Production Order
           </h2>
           <p className="text-sm text-gray-600 mt-1">
-            Create production processes from BOMs for selected items
+            Create production process for the selected item
           </p>
         </div>
       </div>
 
-      {/* ADD ROW BUTTON */}
-      <div className="flex justify-end mb-4">
-        <Button
-          onClick={addItemRow}
-          className="bg-[#105076] hover:bg-[#0d4566] text-white"
-          disabled={creatingProcess}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add New Row
-        </Button>
-      </div>
-
-      {/* TABLE WITH HORIZONTAL SCROLL */}
       <div className="border rounded-lg bg-white overflow-hidden">
         <div className="overflow-x-auto">
           <Table className="min-w-full">
@@ -620,17 +623,14 @@ const CreateProductionOrder: React.FC = () => {
                 <TableHead className="whitespace-nowrap min-w-[100px]">Same Store</TableHead>
                 <TableHead className="whitespace-nowrap min-w-[150px]">Delivery Date</TableHead>
                 <TableHead className="whitespace-nowrap min-w-[180px]">Expected Completion</TableHead>
-                <TableHead className="whitespace-nowrap min-w-[80px]" />
               </TableRow>
             </TableHeader>
 
             <TableBody>
               {productionItems.map((row, index) => (
                 <TableRow key={index} className="whitespace-nowrap">
-                  {/* Index */}
-                  <TableCell>{index + 1}</TableCell>
+                  <TableCell>1</TableCell>
 
-                  {/* Item Dropdown */}
                   <TableCell>
                     <ItemSelect
                       value={row.itemId}
@@ -638,12 +638,10 @@ const CreateProductionOrder: React.FC = () => {
                     />
                   </TableCell>
 
-                  {/* Item Name */}
                   <TableCell>
                     <Input value={row.itemName} readOnly className="min-w-[150px]" />
                   </TableCell>
 
-                  {/* Document Series */}
                   <TableCell>
                     <Input
                       placeholder="Series"
@@ -655,7 +653,6 @@ const CreateProductionOrder: React.FC = () => {
                     />
                   </TableCell>
 
-                  {/* BOM Dropdown */}
                   <TableCell>
                     <BOMSelect
                       value={row.bom}
@@ -664,16 +661,15 @@ const CreateProductionOrder: React.FC = () => {
                     />
                   </TableCell>
 
-                  {/* Stock */}
                   <TableCell>
                     <Input value={row.currentStock} readOnly className="min-w-[100px]" />
                   </TableCell>
 
-                  {/* Qty */}
                   <TableCell>
                     <Input
                       type="number"
                       min="1"
+                      step="0.01"
                       value={row.quantity}
                       onChange={(e) =>
                         updateItemField(index, "quantity", e.target.value)
@@ -683,12 +679,10 @@ const CreateProductionOrder: React.FC = () => {
                     />
                   </TableCell>
 
-                  {/* UOM */}
                   <TableCell>
                     <Input value={row.uom} readOnly className="min-w-[100px]" />
                   </TableCell>
 
-                  {/* Reference Number */}
                   <TableCell>
                     <Input
                       value={row.referenceNumber}
@@ -700,7 +694,6 @@ const CreateProductionOrder: React.FC = () => {
                     />
                   </TableCell>
 
-                  {/* FG Store */}
                   <TableCell>
                     <Select
                       value={row.fgStore}
@@ -720,7 +713,6 @@ const CreateProductionOrder: React.FC = () => {
                     </Select>
                   </TableCell>
 
-                  {/* RM Store */}
                   <TableCell>
                     <Select
                       value={row.rmStore}
@@ -740,7 +732,6 @@ const CreateProductionOrder: React.FC = () => {
                     </Select>
                   </TableCell>
 
-                  {/* Scrap Store */}
                   <TableCell>
                     <Select
                       value={row.scrapStore}
@@ -762,7 +753,6 @@ const CreateProductionOrder: React.FC = () => {
                     </Select>
                   </TableCell>
 
-                  {/* Same Store */}
                   <TableCell>
                     <Checkbox
                       checked={row.useSameStore}
@@ -774,7 +764,6 @@ const CreateProductionOrder: React.FC = () => {
                     />
                   </TableCell>
 
-                  {/* Delivery Date */}
                   <TableCell>
                     <Input
                       type="date"
@@ -791,7 +780,6 @@ const CreateProductionOrder: React.FC = () => {
                     />
                   </TableCell>
 
-                  {/* Expected Completion */}
                   <TableCell>
                     <Input
                       type="date"
@@ -807,19 +795,6 @@ const CreateProductionOrder: React.FC = () => {
                       disabled={creatingProcess}
                     />
                   </TableCell>
-
-                  {/* Delete */}
-                  <TableCell>
-                    {productionItems.length > 1 && !creatingProcess && (
-                      <Button
-                        variant="ghost"
-                        onClick={() => removeItemRow(index)}
-                        className="h-8 w-8 p-0"
-                      >
-                        <Trash2 className="h-4 w-4 text-red-500" />
-                      </Button>
-                    )}
-                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -827,13 +802,17 @@ const CreateProductionOrder: React.FC = () => {
         </div>
       </div>
 
-      {/* SUMMARY */}
       <div className="mt-4 p-4 bg-gray-50 rounded-lg">
         <div className="flex justify-between items-center">
           <div>
             <h3 className="font-medium text-gray-700">Summary</h3>
             <p className="text-sm text-gray-600">
-              {productionItems.length} item(s) selected for production
+              1 item selected for production
+              {workOrderData && (
+                <span className="ml-2 text-green-600">
+                  • Pre-filled from work order
+                </span>
+              )}
             </p>
           </div>
           <div className="text-sm text-gray-600">
@@ -842,7 +821,6 @@ const CreateProductionOrder: React.FC = () => {
         </div>
       </div>
 
-      {/* FOOTER BUTTONS */}
       <div className="flex justify-end gap-4 mt-6">
         <Button 
           variant="outline" 
@@ -854,7 +832,7 @@ const CreateProductionOrder: React.FC = () => {
         <Button
           className="bg-[#105076] hover:bg-[#0d4566]"
           onClick={handleCreateProduction}
-          disabled={creatingProcess || productionItems.length === 0}
+          disabled={creatingProcess}
         >
           {creatingProcess ? (
             <>

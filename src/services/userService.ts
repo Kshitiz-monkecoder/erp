@@ -8,6 +8,33 @@ export interface APIResponse<T> {
 }
 
 // ------------------------------
+// PERMISSION TYPES (Add these)
+// ------------------------------
+export interface Permission {
+  basic: boolean;
+  moderate: boolean;
+  full: boolean;
+  critical: boolean;
+}
+
+export interface Permissions {
+  [module: string]: Permission;
+}
+
+export interface TeamPermissionsRequest {
+  teamId: number;
+  permissions: Permissions;
+}
+
+export interface PermissionsResponse {
+  status: boolean;
+  message: string;
+  data: {
+    [key: string]: Permission;
+  };
+}
+
+// ------------------------------
 // TEAM TYPES
 // ------------------------------
 export interface TeamPermissions {
@@ -29,8 +56,18 @@ export interface TeamResponse {
   id: number;
   name: string;
   description: string;
-  usersCount: number;
-  permissions?: TeamPermissions;
+  permissions: {
+    [key: string]: {
+      full: boolean;
+      basic: boolean;
+      critical: boolean;
+      moderate: boolean;
+    };
+  };
+  companyId: number;
+  createdAt: string;
+  updatedAt: string;
+  userCount: number;
 }
 
 // ------------------------------
@@ -42,7 +79,7 @@ export interface UserResponse {
   email: string;
   phone: string;
   team: string | null;
-  teamId?: number; // Added for better team assignment
+  teamId?: number;
 }
 
 export interface CreateUserRequest {
@@ -88,7 +125,7 @@ export interface JoinTeamResponse {
 
 export const userService = {
   // -------------------------------
-  // TEAMS - Correct endpoints
+  // TEAMS
   // -------------------------------
   createTeam: async (data: TeamRequest): Promise<APIResponse<TeamResponse>> =>
     await post("/team", data),
@@ -103,17 +140,36 @@ export const userService = {
     id: number,
     data: Partial<TeamRequest>
   ): Promise<APIResponse<TeamResponse>> =>
-    await put(`/teams/${id}`, data),
+    await put(`/team/${id}`, data),
 
   deleteTeam: async (
     id: number
   ): Promise<APIResponse<{ message: string }>> =>
-    await del(`/teams/${id}`),
+    await del(`/team/${id}`),
 
   assignUserToTeam: async (
     data: AssignUserRequest
   ): Promise<APIResponse<{ message: string }>> =>
     await post("/teams/assign-user", data),
+
+  // -------------------------------
+  // PERMISSIONS (Add these methods)
+  // -------------------------------
+  // Get all available permissions (modules)
+  getAllPermissions: async (): Promise<APIResponse<Permissions>> =>
+    await get("/permissions"),
+
+  // Update team permissions
+  // Update team permissions
+updateTeamPermissions: async (
+  data: TeamPermissionsRequest
+): Promise<APIResponse<{ message: string }>> =>
+  await put(`/team/${data.teamId}`, { permissions: data.permissions }),
+  // Get team permissions
+  getTeamPermissions: async (
+    teamId: number
+  ): Promise<APIResponse<{ permissions: Permissions }>> =>
+    await get(`/team/${teamId}`),
 
   // -------------------------------
   // USERS
@@ -122,18 +178,23 @@ export const userService = {
     await get(`/users?page=${page}&limit=${limit}`),
 
   createUser: async (data: CreateUserRequest): Promise<APIResponse<UserResponse>> =>
-    await post("/users", data),
+    await post("/user", data),
 
   updateUser: async (
     id: number,
-    data: Partial<UserResponse>
-  ): Promise<APIResponse<UserResponse>> =>
-    await put(`/users/${id}`, data),
+    data: Partial<CreateUserRequest>
+  ): Promise<APIResponse<UserResponse>> => {
+    const requestData = {
+      ...data,
+      id: id
+    };
+    return await put(`/user/${id}`, requestData);
+  },
 
   deleteUser: async (
     id: number
   ): Promise<APIResponse<{ message: string }>> =>
-    await del(`/users/${id}`),
+    await del(`/user/${id}`),
 
   // -------------------------------
   // INVITES

@@ -864,7 +864,7 @@ const Invoice: React.FC = () => {
 
               <div className="space-y-1">
                 <Label className={labelClasses} htmlFor="deliveryNote">
-                  Delivery Note
+                  Delivery Note <span className="text-[#F53D6B] -mr-2">*</span>
                 </Label>
                 <Textarea
                   className={`${inputClasses} max-h-32`}

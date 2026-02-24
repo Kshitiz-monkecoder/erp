@@ -95,18 +95,18 @@ export const ProductionSubLinks: INavlinks[] = [
     name: "Work Orders",
     link: "/production?tab=work-orders",
   },
-  {
-    name: "Sub Contract",
-    link: "/production?tab=sub-contract",
-  },
+  // {
+  //   name: "Sub Contract",
+  //   link: "/production?tab=sub-contract",
+  // },
   {
     name: "Bill of Materials",
     link: "/production?tab=bill-of-materials",
   },
-    {
-    name: "Create BOM",
-    link: "/production/bom/create",
-  },
+  //   {
+  //   name: "Create BOM",
+  //   link: "/production/bom/create",
+  // },
 ];
 
 
@@ -119,4 +119,8 @@ export const settingSubLinks : INavlinks[] = [
     name: "Teams", 
     link: "/settings/teams?tab=teams" 
   },
+  {
+    name: "My Permissions",
+    link: "/settings/my-permissions?tab=my-permissions"
+  }
 ]

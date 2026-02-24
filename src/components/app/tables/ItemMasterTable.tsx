@@ -120,6 +120,7 @@ interface IItemMasterTable {
   toggleAddInventoryModal: () => void;
   itemMasterTableData: rawItemMasterTableDataType[];
   showEditInventoryItemModal: (item: rawItemMasterTableDataType) => void;
+  
 }
 
 const ItemMasterTable: React.FC<IItemMasterTable> = ({

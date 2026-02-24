@@ -7,56 +7,106 @@ import { LoaderCircle } from "lucide-react";
 import AddLocationsModal from "@/components/app/modals/AddLocationsModal";
 import { Button } from "@/components/ui/button";
 import DeleteBuyerSupplierModal from "@/components/app/modals/DeleteBuyerSupperModal";
-import {get} from "@/lib/apiService"; // Assuming you have a get function to fetch data
+import { get } from "@/lib/apiService";
+import { useNavigate } from "react-router-dom";
+
 const BuyerAndSupplierDetails: React.FC = () => {
   const [isOpen, setIsOpen] = React.useState(false);
+  const navigate = useNavigate();
 
   // Modal states for adding locations
   const [showBillingModal, setShowBillingModal] = React.useState(false);
   const [showShippingModal, setShowShippingModal] = React.useState(false);
 
+  // Update the Location interface to match API response
   interface Location {
-    id: string;
+    id: number;
     locationName: string;
     companyName: string;
     address1: string;
     address2: string;
     city: string;
-    country: string;
+    gstin: string;
+    gstinType: string;
     postalCode: string;
+    isBillingSame: boolean;
+    billingAddressName: string;
+    addressType: string;
+    createdAt: string;
+    updatedAt: string;
+    // Note: API response doesn't have 'country' field
   }
 
-  const [billingLocations, setBillingLocations] = React.useState<Location[]>(
-    [],
-  );
-  const [shippingLocations, setShippingLocations] = React.useState<Location[]>(
-    [],
-  );
+  const [billingLocations, setBillingLocations] = React.useState<Location[]>([]);
+  const [shippingLocations, setShippingLocations] = React.useState<Location[]>([]);
 
   // Add loading states
   const [isBillingLoading, setIsBillingLoading] = React.useState<boolean>(true);
-  const [isShippingLoading, setIsShippingLoading] =
-    React.useState<boolean>(true);
+  const [isShippingLoading, setIsShippingLoading] = React.useState<boolean>(true);
+  const [isCompanyLoading, setIsCompanyLoading] = React.useState<boolean>(true);
 
   const { slug } = useParams<{ slug: string }>();
-  console.log(slug);
+  console.log("Slug from URL:", slug);
 
-  const [companyData, setCompanyData] = React.useState(() =>
-    JSON.parse(localStorage.getItem("currentB&S") || "{}"),
-  );
+  // Update to fetch company data from API instead of localStorage
+  const [companyData, setCompanyData] = React.useState<any>(null);
   const [showDeleteModal, setShowDeleteModal] = React.useState<boolean>(false);
 
-  const fetchShippingLocations = async () => {
-    setIsShippingLoading(true);
+  // Fetch company data from API
+  const fetchCompanyData = async () => {
+    setIsCompanyLoading(true);
     try {
+      // First check if we have an ID from localStorage
+      const storedData = localStorage.getItem("currentB&S");
+      let companyId;
       
-      const data = await get(
-        `/agent/locations/${companyData.id}?type=shipping`
-      );
-      console.log(data);
-      setShippingLocations(data.data || []);
+      if (storedData) {
+        const parsedData = JSON.parse(storedData);
+        companyId = parsedData.id;
+        console.log("Found company ID from localStorage:", companyId);
+      } else if (slug) {
+        // Try to extract ID from slug
+        companyId = slug;
+        console.log("Using slug as company ID:", companyId);
+      }
+      
+      if (companyId) {
+        const response = await get(`/client/${companyId}`);
+        console.log("Company API response:", response);
+        
+        if (response?.data) {
+          setCompanyData(response.data);
+          // Update localStorage with fresh data
+          localStorage.setItem("currentB&S", JSON.stringify(response.data));
+        }
+      }
     } catch (error) {
       console.error("Error fetching company data:", error);
+      // Fallback to localStorage data if API fails
+      const storedData = localStorage.getItem("currentB&S");
+      if (storedData) {
+        setCompanyData(JSON.parse(storedData));
+      }
+    } finally {
+      setIsCompanyLoading(false);
+    }
+  };
+
+  const fetchShippingLocations = async () => {
+    if (!companyData?.id) return;
+    
+    setIsShippingLoading(true);
+    try {
+      const response = await get(`/agent/locations/${companyData.id}?type=shipping`);
+      console.log("Shipping locations API response:", response);
+      
+      if (response?.data) {
+        setShippingLocations(response.data);
+      } else {
+        setShippingLocations([]);
+      }
+    } catch (error) {
+      console.error("Error fetching shipping locations:", error);
       setShippingLocations([]);
     } finally {
       setIsShippingLoading(false);
@@ -64,12 +114,18 @@ const BuyerAndSupplierDetails: React.FC = () => {
   };
 
   const fetchBillingLocations = async () => {
+    if (!companyData?.id) return;
+    
     setIsBillingLoading(true);
     try {
+      const response = await get(`/agent/locations/${companyData.id}?type=billing`);
+      console.log("Billing locations API response:", response);
       
-      const data = await get(`/agent/locations/${companyData.id}?type=billing`);
-      console.log(data);
-      setBillingLocations(data.data || []);
+      if (response?.data) {
+        setBillingLocations(response.data);
+      } else {
+        setBillingLocations([]);
+      }
     } catch (error) {
       console.error("Error fetching billing locations:", error);
       setBillingLocations([]);
@@ -79,14 +135,20 @@ const BuyerAndSupplierDetails: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchShippingLocations();
-    fetchBillingLocations();
+    fetchCompanyData();
   }, [slug]);
+
+  useEffect(() => {
+    if (companyData?.id) {
+      fetchShippingLocations();
+      fetchBillingLocations();
+    }
+  }, [companyData?.id]);
 
   // Handle successful location addition
   const handleLocationAdded = (
     newLocation: any,
-    type: "billing" | "shipping",
+    type: "billing" | "shipping"
   ) => {
     if (type === "billing") {
       setBillingLocations((prev) => [...prev, newLocation]);
@@ -96,15 +158,38 @@ const BuyerAndSupplierDetails: React.FC = () => {
   };
 
   const toggleDeleteModal = () => setShowDeleteModal((prev) => !prev);
+
+  // Show loading state while fetching company data
+  if (isCompanyLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <LoaderCircle className="animate-spin w-8 h-8 text-[#7047EB]" />
+        <span className="ml-3">Loading company details...</span>
+      </div>
+    );
+  }
+
+  // Show error state if no company data
+  if (!companyData) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center">
+        <div className="text-lg text-gray-600 mb-4">No company data found</div>
+        <Button onClick={() => navigate("/buyers-suppliers")}>
+          Go Back to List
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="bg-gray-100 flex items-center justify-between gap-2 h-18 px-8 py-4">
         <div className="flex items-center gap-2">
           <div className="rounded-full cursor-pointer shadow-none">
-            <img src="/nav-avatar.png" alt="" className="rounded-full" />
+            <img src="/nav-avatar.png" alt="" className="rounded-full w-10 h-10" />
           </div>
           <div className="text-sm">
-            <div>{companyData?.companyName}</div>
+            <div className="font-medium">{companyData?.companyName}</div>
             <p className="text-neutral-500 text-xs">
               {companyData?.companyEmail}
             </p>
@@ -138,23 +223,19 @@ const BuyerAndSupplierDetails: React.FC = () => {
             <div className="font-medium">Company Name</div>
             <div className="text-xs">{companyData?.companyName}</div>
           </div>
-          {/* <div className="space-y-1">
-            <div className="font-medium">TCS</div>
-            <div className="text-xs">None</div>
-          </div> */}
           <div className="space-y-1">
             <div className="font-medium">Mobile Number</div>
             <div className="text-xs">+91 {companyData?.phoneNo}</div>
+          </div>
+          <div className="space-y-1">
+            <div className="font-medium">GST Number</div>
+            <div className="text-xs">{companyData?.gstNumber || "N/A"}</div>
           </div>
         </div>
 
         {/* Contact Details */}
         <div className="px-3 py-2 text-sm flex items-center justify-between bg-gray-400/10 text-gray-400 font-normal">
           <div>CONTACT DETAILS</div>
-          {/* <div className="flex text-xs underline cursor-pointer underline-offset-2 text-[#7047EB] items-center gap-2">
-            <Plus className="w-3 h-3" />
-            Additional Contact Details
-          </div> */}
         </div>
         <div className="text-xs px-3 py-2">
           <div className="space-y-2">
@@ -185,44 +266,51 @@ const BuyerAndSupplierDetails: React.FC = () => {
           </div>
         </div>
         <div className="grid text-xs sm:grid-cols-3 gap-2 px-3 py-2">
+          {/* Primary billing address from company data */}
           <div className="space-y-2">
             <div className="space-y-1">
-              <div className="font-medium text-sm">
-                {companyData?.locationName}
-              </div>
+              <div className="font-medium text-sm">Primary Address</div>
               <div className="font-medium">{companyData?.companyName}</div>
-              <p>
+              <p className="text-xs">
                 {companyData?.addressLine1},<br />
-                {companyData?.addressLine2},<br />
-                {companyData?.state},<br />
-                {companyData?.country} {companyData?.pincode}
+                {companyData?.addressLine2 && `${companyData.addressLine2},`}<br />
+                {companyData?.city}, {companyData?.state}<br />
+                {companyData?.country} - {companyData?.pincode}
               </p>
+              <div className="text-xs text-gray-500 mt-1">
+                GST: {companyData?.gstNumber || "N/A"}
+              </div>
             </div>
           </div>
 
-          {/* Fixed billing locations logic */}
+          {/* Additional billing locations from API */}
           {isBillingLoading ? (
             <div className="flex justify-center items-center">
-              <LoaderCircle className="animate-spin" />
+              <LoaderCircle className="animate-spin w-5 h-5" />
             </div>
           ) : billingLocations.length > 0 ? (
             billingLocations.map((location) => (
               <div key={location.id} className="space-y-2">
                 <div className="space-y-1">
                   <div className="font-medium text-sm">
-                    {location?.locationName}
+                    {location?.locationName || "Billing Location"}
                   </div>
                   <div className="font-medium">{location?.companyName}</div>
-                  <p>
+                  <p className="text-xs">
                     {location?.address1},<br />
-                    {location?.address2},<br />
-                    {location?.city}, {location?.country} {location?.postalCode}
+                    {location?.address2 && `${location.address2},`}<br />
+                    {location?.city} - {location?.postalCode}
                   </p>
+                  <div className="text-xs text-gray-500 mt-1">
+                    GST: {location?.gstin || "N/A"} ({location?.gstinType})
+                  </div>
                 </div>
               </div>
             ))
           ) : (
-            <div className="flex justify-center items-center text-gray-500 text-sm"></div>
+            <div className="flex justify-center items-center text-gray-500 text-sm">
+              No additional billing addresses
+            </div>
           )}
         </div>
 
@@ -238,61 +326,50 @@ const BuyerAndSupplierDetails: React.FC = () => {
           </div>
         </div>
         <div className="grid text-xs sm:grid-cols-3 gap-2 px-3 py-2">
+          {/* Primary shipping address from company data */}
           <div className="space-y-2">
             <div className="space-y-1">
-              <div className="font-medium text-sm">
-                {companyData?.locationName}
-              </div>
+              <div className="font-medium text-sm">Primary Address</div>
               <div className="font-medium">{companyData?.companyName}</div>
-              <p>
+              <p className="text-xs">
                 {companyData?.addressLine1},<br />
-                {companyData?.addressLine2},<br />
-                {companyData?.state},<br />
-                {companyData?.country}, {companyData?.pincode}
+                {companyData?.addressLine2 && `${companyData.addressLine2},`}<br />
+                {companyData?.city}, {companyData?.state}<br />
+                {companyData?.country} - {companyData?.pincode}
               </p>
             </div>
           </div>
 
-          {/* Fixed shipping locations logic */}
+          {/* Additional shipping locations from API */}
           {isShippingLoading ? (
             <div className="flex justify-center items-center">
-              <LoaderCircle className="animate-spin" />
+              <LoaderCircle className="animate-spin w-5 h-5" />
             </div>
           ) : shippingLocations.length > 0 ? (
             shippingLocations.map((location) => (
               <div key={location.id} className="space-y-2">
                 <div className="space-y-1">
                   <div className="font-medium text-sm">
-                    {location.locationName}
+                    {location.locationName || "Shipping Location"}
                   </div>
                   <div className="font-medium">{location.companyName}</div>
-                  <p>
+                  <p className="text-xs">
                     {location.address1},<br />
-                    {location.address2},<br />
-                    {location.city}, {location.country}, {location.postalCode}
+                    {location.address2 && `${location.address2},`}<br />
+                    {location.city} - {location.postalCode}
                   </p>
+                  <div className="text-xs text-gray-500 mt-1">
+                    GST: {location.gstin || "N/A"} ({location.gstinType})
+                  </div>
                 </div>
               </div>
             ))
           ) : (
-            <div className="flex justify-center items-center text-gray-500 text-sm"></div>
+            <div className="flex justify-center items-center text-gray-500 text-sm">
+              No additional shipping addresses
+            </div>
           )}
         </div>
-
-        {/* Opening Balance */}
-        {/* <div className="px-3 py-2 text-sm bg-gray-400/10 text-gray-400 font-normal">
-          OPENING BALANCE
-        </div>
-        <div className="grid text-xs sm:grid-cols-3 md:grid-cols-4 gap-2 px-3 py-2">
-          <div className="space-y-2">
-            <div className="font-medium">Net Payables:</div>
-            <div>₹5,000</div>
-          </div>
-          <div className="space-y-2">
-            <div className="font-medium">Net Receivables:</div>
-            <div>₹3,000</div>
-          </div>
-        </div> */}
 
         {/* Edit Details Modal */}
         <EditDetailsModal
@@ -300,7 +377,8 @@ const BuyerAndSupplierDetails: React.FC = () => {
           isOpen={isOpen}
           onClose={() => setIsOpen(false)}
           onSuccess={() => {
-            // Optionally refresh data after successful edit
+            // Refresh company data after successful edit
+            fetchCompanyData();
             setIsOpen(false);
           }}
           setCompanyData={setCompanyData}
@@ -327,9 +405,14 @@ const BuyerAndSupplierDetails: React.FC = () => {
           clientId={companyData?.id}
           addressType="shipping"
         />
+        
         <DeleteBuyerSupplierModal
           isOpen={showDeleteModal}
-          onClose={() => setShowDeleteModal((prev) => !prev)}
+          onClose={() => setShowDeleteModal(false)}
+          clientId={companyData?.id}
+          onSuccess={() => {
+            navigate("/buyers-suppliers?tab=all");
+          }}
         />
       </div>
     </div>

@@ -1,5 +1,5 @@
 import React from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import MainLayout from "./components/app/MainLayout";
 import Dashboard from "./pages/Dashboard";
 import LoginPage from "./pages/auth/LoginPage";
@@ -49,153 +49,232 @@ import EditBOM from "./pages/bom-edit";
 import ProcessDetails from "./pages/ProcessDeatils";
 import UserManagement from "./pages/setting/UserManagement";
 import Teams from "./pages/setting/TeamPage"; 
-
+import JoinTeamPage from "./pages/auth/JoinTeamPage";
+import MyPermissionsPage from "./components/app/modals/MyPermissions";
+import Unauthorized from "./pages/unauthorized";
+import { AuthProvider } from "./contexts/AuthContext";
+import { PermissionProvider } from "./contexts/PermissionContext";
+import ModuleRouteGuard from "./components/auth/ModuleRouteGuard";
 
 const App: React.FC = () => {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/organization" element={<OrganizationPage />} />
-        
-        <Route element={<ProtectedRoute />}>
-          {/* Main Layout Routes (with sidebar) */}
-          <Route path="/" element={<MainLayout />}>
-            <Route index element={<Dashboard />} />
-            <Route path="buyers-suppliers" element={<BuyerAndSupplier />} />
-            <Route path="addresses" element={<Address />} />
-            {/* Might Change this :slug to other name in future */}
-            <Route
-              path="buyers-suppliers/:slug"
-              element={<BuyerAndSupplierDetails />}
-            />
-            <Route path="add-company" element={<AddCompany />} />
-            <Route path="inventory" element={<Inventory />} />
-            <Route path="sales-purchase" element={<SalesAndPurchase />} />
-            <Route
-              path="sales-purchase/order-details/:id"
-              element={<PurchaseOrderDetails />}
-            />
-            <Route
-              path="sales-purchase/order-preview"
-              element={<PurchaseOrderPreview />}
-            />
-            <Route
-              path="sales-purchase/sales-enquiry-preview/:id"
-              element={<SalesEnquiryPreview />}
-            />
-            <Route
-              path="sales-purchase/order-confirmation/:id"
-              element={<OrderConfirmationDetails />}
-            />
-            <Route
-              path="sales-purchase/order-confirmation-preview/:id"
-              element={<OrderConfirmationPreview />}
-            />
-            <Route
-              path="sales-purchase/invoice-preview/:id"
-              element={<InvoicePreview />}
-            />
-            <Route
-              path="sales-purchase/delivery-challan-preview/:id"
-              element={<DeliveryChallanPreview />}
-            />
-            <Route
-              path="inventory/item-details/:id"
-              element={<SingleItem />}
-            />
-            <Route
-              path="inventory/manual-adjustment"
-              element={<ManualAdjustment />}
-            />
-            <Route
-              path="inventory/store-approval"
-              element={<StoreApproval />}
-            />
-            <Route 
-              path="inventory/inward-document-preview/:id" 
-              element={<InwardDocumentPreview />} 
-            />
-            <Route path="production" element={<Production />} />
-            <Route path="production/bom/:id" element={<BOMDetails />} />
+      <AuthProvider>
+        <PermissionProvider>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/organization" element={<OrganizationPage />} />
+            <Route path="/join" element={<JoinTeamPage />} />
+            <Route path="/unauthorized" element={<Unauthorized />} />
             
-            {/* ADD THESE INSIDE MainLayout TO SHOW WITH SIDEBAR */}
-            <Route path="production/bom" element={<BillOfMaterialTable />} />
-            <Route path="production/bom/create" element={<CreateBom />} />
-            <Route path="/production/bom/edit/:id" element={<EditBOM />} />
-            <Route path ="/production/process-details" element={<ProcessDetails/>}/>
-            
-            {/* ADD THIS TO MainLayout ROUTE GROUP */}
-            <Route path="production/create-order" element={<CreateProductionOrder />} />
+            <Route element={<ProtectedRoute />}>
+              {/* Main Layout Routes (with sidebar) - Wrap with ModuleRouteGuard */}
+              <Route path="/" element={
+                <ModuleRouteGuard>
+                  <MainLayout />
+                </ModuleRouteGuard>
+              }>
+                <Route index element={<Dashboard />} />
+                
+                {/* Buyers and Suppliers module routes */}
+                <Route
+                  path="buyers-suppliers"
+                  element={<BuyerAndSupplier />}
+                />
+                
+                <Route
+                  path="buyers-suppliers/:slug"
+                  element={<BuyerAndSupplierDetails />}
+                />
+                
+                {/* Addresses - Part of Buyers and Suppliers module */}
+                <Route
+                  path="addresses"
+                  element={<Address />}
+                />
+                
+                {/* Add Company - Part of Buyers and Suppliers module */}
+                <Route
+                  path="add-company"
+                  element={<AddCompany />}
+                />
+                
+                {/* Inventory module routes */}
+                <Route
+                  path="inventory"
+                  element={<Inventory />}
+                />
+                
+                <Route
+                  path="inventory/item-details/:id"
+                  element={<SingleItem />}
+                />
+                
+                <Route
+                  path="inventory/manual-adjustment"
+                  element={<ManualAdjustment />}
+                />
+                
+                <Route
+                  path="inventory/store-approval"
+                  element={<StoreApproval />}
+                />
+                
+                <Route 
+                  path="inventory/inward-document-preview/:id" 
+                  element={<InwardDocumentPreview />} 
+                />
+                
+                {/* Sales & Purchase module routes */}
+                <Route
+                  path="sales-purchase"
+                  element={<SalesAndPurchase />}
+                />
+                
+                {/* Sales & Purchase sub-routes */}
+                <Route
+                  path="sales-purchase/order-details/:id"
+                  element={<PurchaseOrderDetails />}
+                />
+                <Route
+                  path="sales-purchase/order-preview"
+                  element={<PurchaseOrderPreview />}
+                />
+                <Route
+                  path="sales-purchase/sales-enquiry-preview/:id"
+                  element={<SalesEnquiryPreview />}
+                />
+                <Route
+                  path="sales-purchase/order-confirmation/:id"
+                  element={<OrderConfirmationDetails />}
+                />
+                <Route
+                  path="sales-purchase/order-confirmation-preview/:id"
+                  element={<OrderConfirmationPreview />}
+                />
+                <Route
+                  path="sales-purchase/invoice-preview/:id"
+                  element={<InvoicePreview />}
+                />
+                <Route
+                  path="sales-purchase/delivery-challan-preview/:id"
+                  element={<DeliveryChallanPreview />}
+                />
+                
+                {/* Production module routes */}
+                <Route
+                  path="production"
+                  element={<Production />}
+                />
+                
+                <Route
+                  path="production/bom/:id"
+                  element={<BOMDetails />}
+                />
+                
+                {/* Production sub-routes */}
+                <Route
+                  path="production/bom"
+                  element={<BillOfMaterialTable />}
+                />
+                <Route
+                  path="production/bom/create"
+                  element={<CreateBom />}
+                />
+                <Route
+                  path="/production/bom/edit/:id"
+                  element={<EditBOM />}
+                />
+                <Route
+                  path="/production/process-details"
+                  element={<ProcessDetails />}
+                />
+                <Route
+                  path="production/create-order"
+                  element={<CreateProductionOrder />}
+                />
 
-            {/* Settings*/}
-            <Route path="settings/users" element={<UserManagement />} />
-            <Route path="settings/teams" element={<Teams />} />
-          </Route>
-          
-          {/* Orders Layout Routes (different layout) */}
-          <Route path="/" element={<OrdersLayout />}>
-            <Route
-              path="sales-purchase/purchase-order"
-              element={<PurchaseOrder />}
-            />
-            <Route path="sales-purchase/sales-order" element={<SalesOrder />} />
-            <Route
-              path="sales-purchase/purchase-quotation"
-              element={<CreateQuotation />}
-            />
-            <Route
-              path="sales-purchase/sales-quotation"
-              element={<CreateSalesQuotation />}
-            />
-            <Route
-              path="sales-purchase/purchase-inword/:id"
-              element={<CreateInword />}
-            />
-            <Route
-              path="sales-purchase/purchase-grn/:id"
-              element={<CreateGRN />}
-            />
-            <Route
-              path="sales-purchase/sales-enquiry"
-              element={<CreateSalesEnquiry />}
-            />
-            <Route
-              path="sales-purchase/service-order"
-              element={<ServiceOrder />}
-            />
-            <Route
-              path="sales-purchase/order-confirmation"
-              element={<OrderConfirmation />}
-            />
-            <Route
-              path="sales-purchase/delivery-challan/:id"
-              element={<DeliveryChallan />}
-            />
-            <Route
-              path="sales-purchase/invoice/:id"
-              element={<Invoice />}
-            />
-            <Route
-              path="sales-purchase/purchase-invoice/:id"
-              element={<PurchaseInvoice />}
-            />
-            <Route
-              path="sales-purchase/service-confirmation"
-              element={<ServiceConfirmation />}
-            />
-            <Route path="sales-purchase/tax-invoice" element={<TaxInvoice />} />
-            <Route
-              path="sales-purchase/adhoc-invoice"
-              element={<AdhocInvoice />}
-            />
-          </Route>
-        </Route>
+                {/* Settings module routes */}
+                <Route path="settings/users" element={<UserManagement />} />
+                <Route path="settings/teams" element={<Teams />} />
+                <Route path="/settings/my-permissions" element={<MyPermissionsPage />} />
+              </Route>
+              
+              {/* Orders Layout Routes (different layout) - Wrap with ModuleRouteGuard */}
+              <Route path="/" element={
+                <ModuleRouteGuard>
+                  <OrdersLayout />
+                </ModuleRouteGuard>
+              }>
+                <Route
+                  path="sales-purchase/purchase-order"
+                  element={<PurchaseOrder />}
+                />
+                <Route
+                  path="sales-purchase/sales-order"
+                  element={<SalesOrder />}
+                />
+                <Route
+                  path="sales-purchase/purchase-quotation"
+                  element={<CreateQuotation />}
+                />
+                <Route
+                  path="sales-purchase/sales-quotation"
+                  element={<CreateSalesQuotation />}
+                />
+                <Route
+                  path="sales-purchase/purchase-inword/:id"
+                  element={<CreateInword />}
+                />
+                <Route
+                  path="sales-purchase/purchase-grn/:id"
+                  element={<CreateGRN />}
+                />
+                <Route
+                  path="sales-purchase/sales-enquiry"
+                  element={<CreateSalesEnquiry />}
+                />
+                <Route
+                  path="sales-purchase/service-order"
+                  element={<ServiceOrder />}
+                />
+                <Route
+                  path="sales-purchase/order-confirmation"
+                  element={<OrderConfirmation />}
+                />
+                <Route
+                  path="sales-purchase/delivery-challan/:id"
+                  element={<DeliveryChallan />}
+                />
+                <Route
+                  path="sales-purchase/invoice/:id"
+                  element={<Invoice />}
+                />
+                <Route
+                  path="sales-purchase/purchase-invoice/:id"
+                  element={<PurchaseInvoice />}
+                />
+                <Route
+                  path="sales-purchase/service-confirmation"
+                  element={<ServiceConfirmation />}
+                />
+                <Route
+                  path="sales-purchase/tax-invoice"
+                  element={<TaxInvoice />}
+                />
+                <Route
+                  path="sales-purchase/adhoc-invoice"
+                  element={<AdhocInvoice />}
+                />
+              </Route>
+            </Route>
 
-        <Route path="*" element={<div>Not Found</div>} />
-      </Routes>
-      <Toaster position="top-center" />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+          <Toaster position="top-center" richColors />
+        </PermissionProvider>
+      </AuthProvider>
     </BrowserRouter>
   );
 };

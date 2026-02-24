@@ -77,28 +77,6 @@ const Address: React.FC = () => {
     fetchAddresses();
   }, []);
 
-  // Handle delete address
-  // const handleDelete = async (id: number) => {
-  //   if (!confirm("Are you sure you want to delete this address?")) return;
-
-  //   try {
-  //     const response = await del(`/locations/${id}`);
-  //     if (response?.status) {
-  //       SuccessToast({
-  //         title: "Success",
-  //         description: "Address deleted successfully",
-  //       });
-  //       fetchAddresses();
-  //     }
-  //   } catch (error) {
-  //     console.error("Error deleting address:", error);
-  //     ErrorToast({
-  //       title: "Error",
-  //       description: "Failed to delete address",
-  //     });
-  //   }
-  // };
-
   // Handle add address with type selection
   const handleAddAddress = (type: "billing" | "shipping") => {
     setAddressType(type);
@@ -141,21 +119,6 @@ const Address: React.FC = () => {
       ),
     },
     {
-      header: "Client",
-      accessorKey: "client.name",
-      cell: ({ row }) => (
-        <div className="min-w-40">
-          <div className="font-medium">{row.original.client?.name}</div>
-          <div className="text-xs text-gray-500">
-            {row.original.client?.companyName}
-          </div>
-          <div className="text-xs text-gray-500">
-            {row.original.client?.email}
-          </div>
-        </div>
-      ),
-    },
-    {
       header: "Type",
       accessorKey: "addressType",
       cell: ({ row }) => {
@@ -186,39 +149,10 @@ const Address: React.FC = () => {
         </div>
       ),
     },
-
-    // {
-    //   header: "Actions",
-    //   accessorKey: "actions",
-    //   cell: ({ row }) => (
-    //     <div className="flex items-center gap-2">
-    //       <Button
-    //         variant="ghost"
-    //         size="sm"
-    //         onClick={() => {
-    //           // For now, show info since edit modal doesn't exist
-    //           alert(
-    //             `Edit functionality for ${row.original.locationName} - Feature coming soon!`
-    //           );
-    //         }}
-    //         className="h-8 w-8 p-0 text-blue-600 hover:text-blue-800 hover:bg-blue-50"
-    //       >
-    //         <Edit className="w-4 h-4" />
-    //       </Button>
-    //       <Button
-    //         variant="ghost"
-    //         size="sm"
-    //         onClick={() => handleDelete(row.original.id)}
-    //         className="h-8 w-8 p-0 text-red-600 hover:text-red-800 hover:bg-red-50"
-    //       >
-    //         <Trash2 className="w-4 h-4" />
-    //       </Button>
-    //     </div>
-    //   ),
-    // },
+    // Client column removed
   ];
 
-  // Custom filter section
+  // Custom filter section - removed client search
   const customFilterSection = (table: any) => (
     <>
       <div className="flex xl:mt-5 items-end">
@@ -244,20 +178,10 @@ const Address: React.FC = () => {
           <option value="">All Types</option>
           <option value="billing">Billing</option>
           <option value="shipping">Shipping</option>
+          <option value="warehouse">Warehouse</option>
         </select>
       </div>
-      <div className="flex xl:mt-5 items-end">
-        <input
-          placeholder="Search client..."
-          value={
-            (table.getColumn("client.name")?.getFilterValue() as string) ?? ""
-          }
-          onChange={(event) =>
-            table.getColumn("client.name")?.setFilterValue(event.target.value)
-          }
-          className="h-8 w-full md:w-[200px] px-3 rounded-md border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </div>
+      {/* Client search bar removed */}
     </>
   );
 

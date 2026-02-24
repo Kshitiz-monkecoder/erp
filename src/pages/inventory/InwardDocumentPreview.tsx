@@ -1,25 +1,16 @@
 // src/pages/inventory/InwardDocumentPreview.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Printer, Share2, Barcode } from "lucide-react";
-import SendEmailModal from "@/components/app/modals/SendEmailModal";
+import { Printer,  Barcode, ArrowLeft } from "lucide-react";
 import BarcodeDialog from "@/components/app/modals/BarcodeDialogue";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { get } from "@/lib/apiService";
-
-/**
- * InwardDocumentPreview
- * - reads route param (tries inwardId | id | documentNumber | fallback last path segment)
- * - attempts to fetch using:
- *    1) GET /inventory/grn?documentNumber=<param>
- *    2) GET /inventory/grn/<id> (if numeric)
- *    3) fallback: GET /inventory/grn and find the match
- */
 
 const InwardDocumentPreview: React.FC = () => {
   const navigate = useNavigate();
   const params = useParams();
   const location = useLocation();
+  const printRef = useRef<HTMLDivElement>(null);
 
   const inwardParam =
     (params as any).inwardId ||
@@ -27,9 +18,7 @@ const InwardDocumentPreview: React.FC = () => {
     (params as any).documentNumber ||
     location.pathname.split("/").filter(Boolean).slice(-1)[0];
 
-  const [showSendEmailModal, setShowSendEmailModal] = useState(false);
   const [showBarcodeDialog, setShowBarcodeDialog] = useState(false);
-
   const [loading, setLoading] = useState(true);
   const [inwardData, setInwardData] = useState<any | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -126,6 +115,215 @@ const InwardDocumentPreview: React.FC = () => {
     fetchSpecificGRN();
   }, [inwardParam]);
 
+  // Handle Print functionality
+  const handlePrint = () => {
+    if (!printRef.current) return;
+
+    const printContent = printRef.current.innerHTML;
+    const printWindow = window.open('', '_blank');
+    
+    if (!printWindow) {
+      alert('Please allow pop-ups to print the document');
+      return;
+    }
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Inward Document - ${inwardData?.documentNumber || inwardData?.purchaseInword?.documentNumber || 'Document'}</title>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            @media print {
+              body {
+                margin: 0;
+                padding: 20px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                color: #000;
+                background: white;
+              }
+              
+              .no-print {
+                display: none !important;
+              }
+              
+              .print-only {
+                display: block !important;
+              }
+              
+              .print-container {
+                width: 100%;
+                max-width: 100%;
+              }
+              
+              table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 20px 0;
+                font-size: 12px;
+              }
+              
+              th, td {
+                border: 1px solid #ddd;
+                padding: 8px 12px;
+                text-align: left;
+              }
+              
+              th {
+                background-color: #f5f5f5;
+                font-weight: bold;
+              }
+              
+              .header-section {
+                text-align: center;
+                margin-bottom: 30px;
+                border-bottom: 2px solid #105076;
+                padding-bottom: 20px;
+              }
+              
+              .document-title {
+                font-size: 24px;
+                font-weight: bold;
+                margin: 10px 0;
+                color: #105076;
+              }
+              
+              .status-badge {
+                background-color: #d1fae5;
+                color: #065f46;
+                padding: 4px 12px;
+                border-radius: 4px;
+                font-size: 12px;
+                display: inline-block;
+                margin-left: 10px;
+              }
+              
+              .address-section {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 30px;
+                margin: 30px 0;
+                border: 1px solid #e5e7eb;
+                padding: 20px;
+                border-radius: 8px;
+              }
+              
+              .address-title {
+                font-size: 14px;
+                font-weight: 600;
+                color: #374151;
+                margin-bottom: 8px;
+              }
+              
+              .address-content {
+                font-size: 13px;
+                line-height: 1.5;
+              }
+              
+              .details-grid {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 20px;
+                margin: 20px 0;
+                background-color: #f9fafb;
+                padding: 20px;
+                border-radius: 8px;
+              }
+              
+              .detail-item {
+                margin-bottom: 10px;
+              }
+              
+              .detail-label {
+                font-size: 12px;
+                color: #6b7280;
+                margin-bottom: 4px;
+              }
+              
+              .detail-value {
+                font-size: 14px;
+                font-weight: 500;
+                color: #111827;
+              }
+              
+              .footer {
+                margin-top: 50px;
+                border-top: 1px solid #e5e7eb;
+                padding-top: 30px;
+                display: flex;
+                justify-content: space-between;
+              }
+              
+              .terms {
+                font-size: 12px;
+                color: #6b7280;
+                max-width: 400px;
+              }
+              
+              .signature-box {
+                background-color: #f3f4f6;
+                padding: 20px 40px;
+                text-align: center;
+                border-radius: 8px;
+              }
+              
+              .company-name {
+                font-size: 14px;
+                font-weight: 600;
+                margin-bottom: 20px;
+              }
+              
+              .signatory-text {
+                font-size: 12px;
+                color: #6b7280;
+                margin-top: 40px;
+              }
+              
+              .page-break {
+                page-break-before: always;
+              }
+              
+              .print-date {
+                text-align: right;
+                font-size: 12px;
+                color: #6b7280;
+                margin-bottom: 20px;
+              }
+            }
+            
+            @media screen {
+              body {
+                background: white;
+                padding: 20px;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="print-date">Printed on: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
+          <div class="print-container">
+            ${printContent}
+          </div>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() {
+                window.close();
+              }, 1000);
+            };
+            
+            window.onafterprint = function() {
+              window.close();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+  };
+
   if (loading)
     return (
       <div className="h-screen flex items-center justify-center text-gray-500">
@@ -146,7 +344,7 @@ const InwardDocumentPreview: React.FC = () => {
       </div>
     );
 
-  // map API object to display fields safely
+  // Map API object to display fields safely
   const mapped = {
     inwardNumber: inwardData?.documentNumber || inwardData?.purchaseInword?.documentNumber || `ID-${inwardData?.id}`,
     status: inwardData?.grnStatus || inwardData?.purchaseInword?.inwardStatus || "-",
@@ -178,33 +376,34 @@ const InwardDocumentPreview: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
-      {/* Top Bar */}
-      <div className="bg-[#EEFBF4] py-4 px-8 flex flex-col sm:flex-row justify-between items-center text-sm">
-        <div>
-          Download Mobile App to share your documents instantly!{" "}
-          <a href="#" className="font-bold text-blue-600 underline">
-            DOWNLOAD APP
-          </a>
-        </div>
-        <div className="flex gap-3 mt-3 sm:mt-0">
-          <Button className="bg-[#105076] hover:bg-[#105076]/90">Share via Email</Button>
-          <Button variant="outline">WhatsApp</Button>
-          <Button variant="secondary">Copy Link</Button>
-        </div>
-      </div>
+      {/* Inline print styles for non-print elements */}
+      <style>{`
+        @media print {
+          .no-print {
+            display: none !important;
+          }
+        }
+      `}</style>
 
       {/* Main Document */}
-      <div className="max-w-5xl mx-auto mt-8 bg-white shadow-lg rounded-lg overflow-hidden">
+      <div ref={printRef} className="max-w-7xl mx-auto mt-10 bg-white shadow-lg rounded-lg overflow-hidden print:shadow-none print:border">
         {/* Header */}
         <div className="border-b px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-4">
-            <button onClick={() => navigate(-1)} className="text-xl">Back</button>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="no-print" 
+              onClick={() => navigate(-1)}
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back
+            </Button>
             <div className="flex items-center gap-3">
               <span className="text-xl font-bold text-[#105076]">{mapped.inwardNumber}</span>
               <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs">{mapped.status}</span>
             </div>
           </div>
-          <Button variant="outline" size="sm">Go to Transaction</Button>
         </div>
 
         {/* Title + Actions */}
@@ -216,11 +415,22 @@ const InwardDocumentPreview: React.FC = () => {
             <h1 className="text-2xl font-bold">Inward Document</h1>
           </div>
 
-          <div className="flex gap-3">
-            <Button variant="outline" size="sm"><Printer className="w-4 h-4 mr-2" />Print</Button>
-            <Button variant="outline" size="sm"><Share2 className="w-4 h-4 mr-2" />Share</Button>
-            <Button onClick={() => setShowBarcodeDialog(true)} className="bg-[#105076] hover:bg-[#105076]/90">
-              <Barcode className="w-4 h-4 mr-2" />Barcode
+          <div className="flex gap-3 no-print">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={handlePrint}
+              className="flex items-center gap-2"
+            >
+              <Printer className="w-4 h-4" />
+              Print
+            </Button>
+            <Button 
+              onClick={() => setShowBarcodeDialog(true)} 
+              className="bg-[#105076] hover:bg-[#105076]/90 flex items-center gap-2"
+            >
+              <Barcode className="w-4 h-4" />
+              Barcode
             </Button>
           </div>
         </div>
@@ -331,15 +541,13 @@ const InwardDocumentPreview: React.FC = () => {
         </div>
       </div>
 
-      {/* ---------- PASS grnId and items to BarcodeDialog ---------- */}
+      {/* Barcode Dialog */}
       <BarcodeDialog
         open={showBarcodeDialog}
         onOpenChange={setShowBarcodeDialog}
         grnId={inwardData?.id}
         items={(inwardData?.items ?? [])}
       />
-
-      <SendEmailModal isOpen={showSendEmailModal} onClose={() => setShowSendEmailModal(false)} />
     </div>
   );
 };

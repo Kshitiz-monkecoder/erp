@@ -2,6 +2,8 @@ import { Outlet } from "react-router";
 import { useState, useEffect } from "react";
 import Navbar from "./Navbar";
 import { get } from "@/lib/apiService";
+import { usePermissions } from "../../contexts/PermissionContext"; 
+
 const decodeJWT = (token: any) => {
   if (!token) return null;
 
@@ -18,6 +20,7 @@ const decodeJWT = (token: any) => {
 
 const MainLayout = () => {
   const [isLargeScreen, setIsLargeScreen] = useState(window.innerWidth >= 1024);
+  const { setPermissions } = usePermissions();
 
   useEffect(() => {
     function handleResize() {
@@ -36,11 +39,17 @@ const MainLayout = () => {
     get("/profile")
       .then((data) => {
         localStorage.setItem("User", JSON.stringify(data?.data));
+        
+        // Save permissions to context and localStorage
+        if (data?.data?.team?.permissions) {
+          setPermissions(data.data.team.permissions);
+          localStorage.setItem('userPermissions', JSON.stringify(data.data.team.permissions));
+        }
       })
       .catch((error) => console.error("Error fetching profile:", error));
 
     return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  }, [setPermissions]);
 
   return (
     <main className="min-h-screen">

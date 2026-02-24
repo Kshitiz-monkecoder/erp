@@ -12,11 +12,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-// import { useNavigate } from "react-router-dom";
-import {get} from "../../../lib/apiService"
+import { get } from "../../../lib/apiService";
 
 interface ISelectSupplierModalProps extends IModalProps {
-  /** Called with the selected supplier ID when the user hits Continue */
   onContinue: (supplierId: string) => void;
 }
 
@@ -28,10 +26,15 @@ const SelectSupplierModal: React.FC<ISelectSupplierModalProps> = ({
   const modalRef = useRef<HTMLDivElement>(null);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>("");
-  // const navigate = useNavigate();
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    if (!selectedSupplierId) {
+      alert("Please select a supplier");
+      return;
+    }
 
     const selectedSupplier = suppliers.find((s) => s.id == selectedSupplierId);
     if (selectedSupplier) {
@@ -49,22 +52,51 @@ const SelectSupplierModal: React.FC<ISelectSupplierModalProps> = ({
   // Fetch suppliers from backend
   useEffect(() => {
     const fetchSuppliers = async () => {
-      try {
-        // const token = localStorage.getItem("token");
+      if (!isOpen) return;
       
-
-        const data = await get("/client");
-        const filteredSuppliers = (data.data || []).filter(
+      setIsLoading(true);
+      try {
+        const response = await get("/client");
+        console.log("Full API response:", response); // Debug log
+        
+        // Handle different response structures
+        let clients = [];
+        
+        if (response && response.data) {
+          // If response.data has a 'list' property (new structure)
+          if (response.data.list && Array.isArray(response.data.list)) {
+            clients = response.data.list;
+          } 
+          // If response.data is directly an array (old structure)
+          else if (Array.isArray(response.data)) {
+            clients = response.data;
+          }
+          // If response.data is the array itself (another possible structure)
+          else if (Array.isArray(response)) {
+            clients = response;
+          }
+        }
+        
+        console.log("Clients extracted:", clients); // Debug log
+        
+        // Filter suppliers (Supplier or Both)
+        const filteredSuppliers = clients.filter(
           (client: any) =>
             client.clientType === "Supplier" || client.clientType === "Both",
         );
+        
+        console.log("Filtered suppliers:", filteredSuppliers); // Debug log
         setSuppliers(filteredSuppliers);
+        
       } catch (error) {
         console.error("Error fetching suppliers:", error);
+        setSuppliers([]);
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    if (isOpen) fetchSuppliers();
+    fetchSuppliers();
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -102,31 +134,42 @@ const SelectSupplierModal: React.FC<ISelectSupplierModalProps> = ({
                 </Link>
               </div>
 
-              <Select
-                value={selectedSupplierId}
-                onValueChange={(value) => setSelectedSupplierId(value)}
-              >
-                <SelectTrigger className={`${inputClasses} w-full`}>
-                  <SelectValue placeholder="Select a Supplier" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {(suppliers || []).map((supplier) => (
-                      <SelectItem key={supplier.id} value={String(supplier.id)}>
-                        {supplier.companyName}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              {isLoading ? (
+                <div className="py-3 text-center text-gray-500">
+                  Loading suppliers...
+                </div>
+              ) : suppliers.length === 0 ? (
+                <div className="py-3 text-center text-gray-500">
+                  No suppliers found. Please add a supplier first.
+                </div>
+              ) : (
+                <Select
+                  value={selectedSupplierId}
+                  onValueChange={(value) => setSelectedSupplierId(value)}
+                >
+                  <SelectTrigger className={`${inputClasses} w-full`}>
+                    <SelectValue placeholder="Select a Supplier" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {suppliers.map((supplier) => (
+                        <SelectItem key={supplier.id} value={String(supplier.id)}>
+                          {supplier.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             <div className="mt-6 text-right">
               <button
                 type="submit"
-                className="bg-[#7047EB] text-white px-4 py-2 rounded hover:bg-[#5c3cc2]"
+                className="bg-[#7047EB] text-white px-4 py-2 rounded hover:bg-[#5c3cc2] disabled:bg-gray-400"
+                disabled={!selectedSupplierId || isLoading}
               >
-                Continue
+                {isLoading ? "Loading..." : "Continue"}
               </button>
             </div>
           </div>

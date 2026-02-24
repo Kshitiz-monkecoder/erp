@@ -1,10 +1,10 @@
 // src/pages/ItemMaster.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import UniversalTable from "@/components/app/tables";
 import { InventoryItem } from "./types";
-import { get, post } from "@/lib/apiService";
+import { get } from "@/lib/apiService";
 import { ColumnDef } from "@tanstack/react-table";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Filter, Plus, RefreshCcw, ArrowRightLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import SelectFilter, { OptionType } from "@/components/app/SelectFilter";
 import MultiSelectWithSearch from "@/components/app/MultiSelectWithSearch";
@@ -12,80 +12,210 @@ import AddInventoryItemModal from "@/components/app/modals/AddInventoryItemModal
 import AddUnitOfMeasurementModal from "@/components/app/modals/AddUnitOfMeasurementModal";
 import AddCategoriesModal from "@/components/app/modals/AddCategoriesModal";
 import AddWarehouseModal from "@/components/app/modals/AddWarehouseModal";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { inputClasses, labelClasses } from "@/lib/constants";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2 } from "lucide-react";
-import SuccessToast from "@/components/app/toasts/SuccessToast"; // adjust path if needed
+import CreateStockTransferModal from "@/components/app/modals/CreateStockTransferModal";
+import UpdateProductStockModal from "@/components/ui/UpdateProductStockModal";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
 
+type StockStatus = "all" | "negative" | "low" | "excess";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const productOptions: OptionType[] = [
-  { label: "Products", value: "Product" },
-  { label: "Service", value: "Service" },
-];
-
-const storeOptions: OptionType[] = [
-  { label: "Default Stock Store", value: "Default Stock Store" },
-  { label: "Default Reject Store", value: "Default Reject Store" },
+  { label: "All Items", value: "all" },
+  { label: "Products", value: "true" },
+  { label: "Service", value: "false" },
 ];
 
 const statusOptions: OptionType[] = [
   { label: "All", value: "all" },
+  { label: "Negative Stock", value: "negative" },
   { label: "Low Stock", value: "low" },
   { label: "Excess Stock", value: "excess" },
-  { label: "Negative Stock", value: "negative" },
-  { label: "Inactive Items", value: "inactive" },
 ];
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const isNegativeStock = (item: InventoryItem) => Number(item.currentStock) < 0;
+const isLowStock = (item: InventoryItem) =>
+  Number(item.currentStock) >= 0 &&
+  Number(item.currentStock) < Number(item.minimumStockLevel ?? 0);
+const isExcessStock = (item: InventoryItem) =>
+  Number(item.currentStock) > Number(item.maximumStockLevel ?? Infinity);
+
+// ─── Stock Card ───────────────────────────────────────────────────────────────
+
+interface StockCardProps {
+  label: string;
+  count: number;
+  status: StockStatus;
+  activeStatus: StockStatus;
+  onClick: (s: StockStatus) => void;
+  color: "red" | "amber" | "blue";
+}
+
+const colorMap = {
+  red: {
+    activeBorder: "border-red-400",
+    activeLabel: "text-red-600",
+    activeCount: "text-red-600",
+    activeBg: "bg-red-50",
+    inactiveBorder: "border-red-200",
+    inactiveBg: "bg-red-50/40",
+    inactiveLabel: "text-red-400",
+    inactiveCount: "text-red-500",
+    filterIcon: "text-red-400",
+  },
+  amber: {
+    activeBorder: "border-amber-400",
+    activeLabel: "text-amber-700",
+    activeCount: "text-amber-700",
+    activeBg: "bg-amber-50",
+    inactiveBorder: "border-amber-200",
+    inactiveBg: "bg-amber-50/40",
+    inactiveLabel: "text-amber-500",
+    inactiveCount: "text-amber-600",
+    filterIcon: "text-amber-400",
+  },
+  blue: {
+    activeBorder: "border-blue-400",
+    activeLabel: "text-blue-700",
+    activeCount: "text-blue-700",
+    activeBg: "bg-blue-50",
+    inactiveBorder: "border-blue-200",
+    inactiveBg: "bg-blue-50/40",
+    inactiveLabel: "text-blue-400",
+    inactiveCount: "text-blue-500",
+    filterIcon: "text-blue-400",
+  },
+};
+
+const StockCard: React.FC<StockCardProps> = ({ label, count, status, activeStatus, onClick, color }) => {
+  const isActive = activeStatus === status;
+  const c = colorMap[color];
+  return (
+    <button
+      onClick={() => onClick(isActive ? "all" : status)}
+      className={`
+        flex items-center justify-between flex-1 px-5 py-3 rounded-lg border-2 transition-all duration-150 select-none text-left
+        ${isActive
+          ? `${c.activeBorder} ${c.activeBg} shadow-sm`
+          : `${c.inactiveBorder} ${c.inactiveBg} hover:shadow-sm`}
+      `}
+    >
+      <span className={`text-sm font-semibold ${isActive ? c.activeLabel : c.inactiveLabel}`}>
+        {label}
+      </span>
+      <div className="flex items-center gap-2">
+        <span className={`text-xl font-bold ${isActive ? c.activeCount : c.inactiveCount}`}>
+          {count}
+        </span>
+        <Filter className={`w-4 h-4 ${c.filterIcon} ${isActive ? "opacity-100" : "opacity-60"}`} />
+      </div>
+    </button>
+  );
+};
+
+// ─── Actions Dropdown ─────────────────────────────────────────────────────────
+
+interface ActionsDropdownProps {
+  onUpdateStock: () => void;
+  onStockTransfer: () => void;
+}
+
+const ActionsDropdown: React.FC<ActionsDropdownProps> = ({ onUpdateStock, onStockTransfer }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 px-4 py-[7px] rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 font-medium text-sm transition-colors shadow-sm h-8"
+      >
+        Actions
+        <ChevronDown className={`w-4 h-4 transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-1.5 w-60 bg-white rounded-xl border border-gray-100 shadow-xl z-30 py-1.5 overflow-hidden">
+          {/* Update Product Stock */}
+          <button
+            onClick={() => { setOpen(false); onUpdateStock(); }}
+            className="w-full flex items-start gap-3 px-4 py-3 hover:bg-emerald-50 transition-colors group"
+          >
+            <div className="mt-0.5 p-1.5 rounded-md bg-emerald-100 group-hover:bg-emerald-200 transition-colors flex-shrink-0">
+              <RefreshCcw className="w-3.5 h-3.5 text-emerald-600" />
+            </div>
+            <div className="text-left">
+              <p className="text-sm font-semibold text-gray-800">Update Product Stock</p>
+              <p className="text-xs text-gray-400 mt-0.5 leading-snug">Add or reduce item quantity in bulk</p>
+            </div>
+          </button>
+
+          <div className="mx-3 border-t border-gray-100" />
+
+          {/* Stock Transfer */}
+          <button
+            onClick={() => { setOpen(false); onStockTransfer(); }}
+            className="w-full flex items-start gap-3 px-4 py-3 hover:bg-blue-50 transition-colors group"
+          >
+            <div className="mt-0.5 p-1.5 rounded-md bg-blue-100 group-hover:bg-blue-200 transition-colors flex-shrink-0">
+              <ArrowRightLeft className="w-3.5 h-3.5 text-blue-600" />
+            </div>
+            <div className="text-left">
+              <p className="text-sm font-semibold text-gray-800">Stock Transfer</p>
+              <p className="text-xs text-gray-400 mt-0.5 leading-snug">Transfer your items between stores</p>
+            </div>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 const ItemMaster: React.FC = () => {
-  const [itemData, setItemData] = useState<Array<InventoryItem>>(new Array<InventoryItem>());
+  const [itemData, setItemData] = useState<Array<InventoryItem>>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [maxID, setMaxID] = useState<number>(0);
+  const [selectedProductType, setSelectedProductType] = useState<string>("all");
+  const [activeStockStatus, setActiveStockStatus] = useState<StockStatus>("all");
 
-  const [showAddUnitOfMeasurementModal, setShowAddUnitOfMeasurementModal] = useState<boolean>(false);
-  const [showAddWarehouseModal, setShowAddWarehouseModal] = useState<boolean>(false);
-  const [showAddCategoriesModal, setShowAddCategoriesModal] = useState<boolean>(false);
-  const [showAddInventoryItemModal, setShowAddInventoryItemModal] = useState<boolean>(false);
-
-  // Barcode modal state
-  const [barcodeModalOpen, setBarcodeModalOpen] = useState(false);
-  const [barcodeModalItem, setBarcodeModalItem] = useState<{ itemId: string; itemName: string; id: number | null }>({
-    itemId: "",
-    itemName: "",
-    id: null,
-  });
-
-  const [_refreshCategoriesTrigger, setRefreshCategoriesTrigger] = useState<number>(0);
-  const [_refreshWarehouseTrigger, setRefreshWarehouseTrigger] = useState<number>(0);
-
-  const toggleAddUnitOfMeasurementModal = () => setShowAddUnitOfMeasurementModal((prev) => !prev);
-  const toggleAddInventoryItemModal = () => setShowAddInventoryItemModal((prev) => !prev);
-  const toggleAddWarehouseModal = () => setShowAddWarehouseModal((prev) => !prev);
-  const toggleAddCategoriesModal = () => setShowAddCategoriesModal((prev) => !prev);
-  const handleRefreshCategoriesTable = () => setRefreshCategoriesTrigger((prev) => prev + 1);
-  const handleRefreshWarehouseTable = () => setRefreshWarehouseTrigger((prev) => prev + 1);
+  const [showAddUnitOfMeasurementModal, setShowAddUnitOfMeasurementModal] = useState(false);
+  const [showAddWarehouseModal, setShowAddWarehouseModal] = useState(false);
+  const [showAddCategoriesModal, setShowAddCategoriesModal] = useState(false);
+  const [showAddInventoryItemModal, setShowAddInventoryItemModal] = useState(false);
+  const [showUpdateStockModal, setShowUpdateStockModal] = useState(false);
+  const [showStockTransferModal, setShowStockTransferModal] = useState(false);
 
   const navigateTo = useNavigate();
 
   useEffect(() => {
     fetchInventoryItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedProductType]);
 
   const fetchInventoryItems = async () => {
     try {
       setLoading(true);
-      const response = await get("/inventory/item");
+      let queryParams = "";
+      if (selectedProductType === "true") queryParams = "?isProduct=true";
+      else if (selectedProductType === "false") queryParams = "?isProduct=false";
+      const response = await get(`/inventory/item${queryParams}`);
       if (!response) throw new Error("Invalid response from server");
-      setItemData(response.data || []);
-      setMaxID(
-        (response.data || []).reduce((max: number, item: InventoryItem) => {
-          return Math.max(max, (item.id as number) || 0);
-        }, 0)
-      );
+      const data: InventoryItem[] = response.data || [];
+      setItemData(data);
+      setMaxID(data.reduce((max: number, item: InventoryItem) => Math.max(max, (item.id as number) || 0), 0));
     } catch (error) {
       console.error("Error fetching inventory items:", error);
     } finally {
@@ -93,11 +223,26 @@ const ItemMaster: React.FC = () => {
     }
   };
 
-  // function to open barcode modal, used in table
-  const openBarcodeModal = (row: InventoryItem) => {
-    setBarcodeModalItem({ itemId: row.sku, itemName: row.name, id: row.id || null });
-    setBarcodeModalOpen(true);
-  };
+  const negativeCount = useMemo(() => itemData.filter(isNegativeStock).length, [itemData]);
+  const lowCount = useMemo(() => itemData.filter(isLowStock).length, [itemData]);
+  const excessCount = useMemo(() => itemData.filter(isExcessStock).length, [itemData]);
+
+  const filteredData = useMemo(() => {
+    if (activeStockStatus === "negative") return itemData.filter(isNegativeStock);
+    if (activeStockStatus === "low") return itemData.filter(isLowStock);
+    if (activeStockStatus === "excess") return itemData.filter(isExcessStock);
+    return itemData;
+  }, [itemData, activeStockStatus]);
+
+  const handleProductTypeChange = (value: string) => { setSelectedProductType(value); setActiveStockStatus("all"); };
+  const handleStockStatusChange = (status: StockStatus) => setActiveStockStatus(status);
+  const handleStatusDropdownChange = (value: string) => setActiveStockStatus(value as StockStatus);
+  const handleRefreshItemTable = () => fetchInventoryItems();
+
+  const toggleAddUnitOfMeasurementModal = () => setShowAddUnitOfMeasurementModal((p) => !p);
+  const toggleAddInventoryItemModal = () => setShowAddInventoryItemModal((p) => !p);
+  const toggleAddWarehouseModal = () => setShowAddWarehouseModal((p) => !p);
+  const toggleAddCategoriesModal = () => setShowAddCategoriesModal((p) => !p);
 
   const columns: ColumnDef<InventoryItem>[] = [
     {
@@ -105,109 +250,134 @@ const ItemMaster: React.FC = () => {
       accessorKey: "itemId",
       cell: ({ row }) => (
         <div
-          onClick={() => {
-            navigateTo(`/inventory/item-details/${row.original.id}`);
-          }}
+          onClick={() => navigateTo(`/inventory/item-details/${row.original.id}`)}
           className="font-normal text-blue-500 gap-2 min-w-56 flex items-center cursor-pointer"
         >
           {row.original.sku}
           <ArrowUpRight className="text-blue-500 w-5" />
         </div>
       ),
-      meta: {
-        filterVariant: "select",
-      },
+      meta: { filterVariant: "select" },
     },
     {
       header: "Item Name",
       accessorKey: "itemName",
       cell: ({ row }) => <div className="font-normal min-w-32">{row.original.name}</div>,
-      meta: {
-        filterVariant: "select",
-      },
+      meta: { filterVariant: "select" },
     },
     {
       header: "Item Category",
       accessorKey: "itemCategory",
       cell: ({ row }) => <div className="font-normal min-w-32">{row.original.category?.name}</div>,
       filterFn: "equals",
-      meta: {
-        filterVariant: "select",
-      },
+      meta: { filterVariant: "select" },
     },
     {
       header: "Unit",
       accessorKey: "unit",
       cell: ({ row }) => <div className="font-normal">{row.original.unit?.name}</div>,
-      meta: {
-        filterVariant: "select",
+      meta: { filterVariant: "select" },
+    },
+    {
+      header: "Current Stock",
+      accessorKey: "currentStock",
+      cell: ({ row }) => {
+        const stock = Number(row.original.currentStock);
+        return (
+          <div className={`font-semibold min-w-28 ${stock < 0 ? "text-red-500" : "text-gray-800"}`}>
+            {stock.toLocaleString()}
+          </div>
+        );
       },
+      meta: { filterVariant: "select" },
     },
     {
       header: "Default Price",
       accessorKey: "defaultPrice",
       cell: ({ row }) => <div className="font-normal min-w-32">{row.original.defaultPrice}</div>,
-      meta: {
-        filterVariant: "select",
-      },
+      meta: { filterVariant: "select" },
     },
     {
       header: "Regular Buying Price",
       accessorKey: "regularBuyingPrice",
       cell: ({ row }) => <div className="font-normal min-w-32">{row.original.regularBuyingPrice}</div>,
-      meta: {
-        filterVariant: "select",
-      },
-    },
-    // Barcode column -> opens modal
-    {
-      header: "Barcode",
-      id: "barcode",
-      cell: ({ row }) => (
-        <button
-          className="text-blue-600 border px-3 py-1 rounded-md hover:bg-blue-50"
-          onClick={() => openBarcodeModal(row.original)}
-        >
-          + Add Barcode
-        </button>
-      ),
+      meta: { filterVariant: "select" },
     },
   ];
 
   return (
     <>
+      {/* ── Stock Summary Bar ─────────────────────────────────────────────── */}
+      <div className="flex gap-3 mb-4 items-stretch">
+        <StockCard label="Negative Stock" count={negativeCount} status="negative" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="red" />
+        <StockCard label="Low Stock" count={lowCount} status="low" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="amber" />
+        <StockCard label="Excess Stock" count={excessCount} status="excess" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="blue" />
+      </div>
+
+      {/* ── Table ─────────────────────────────────────────────────────────── */}
+      {/*
+        We intentionally omit enableCreate / onCreateClick from UniversalTable
+        and instead render both the Actions button AND the Add Item button
+        ourselves inside customFilterSection using ml-auto, so they appear
+        side-by-side in the correct order: [Actions] [+ Add Item]
+      */}
       <UniversalTable<InventoryItem>
-        data={itemData}
+        data={filteredData}
         columns={columns}
         isLoading={loading}
-        enableCreate={true}
-        createButtonText="Add Item"
-        onCreateClick={toggleAddInventoryItemModal}
-        customFilterSection={(table) => (
+        customFilterSection={() => (
           <>
+            {/* ── Left: filter controls ── */}
             <SelectFilter
               label="Products/Services"
               items={productOptions}
-              onValueChange={(value) => {
-                table.getColumn("type")?.setFilterValue(value);
-              }}
-            />
-            <SelectFilter
-              label="Stores"
-              items={storeOptions}
-              onValueChange={() => {
-                // implement if you add a store column
-              }}
+              defaultValue={productOptions[0].value}
+              onValueChange={handleProductTypeChange}
             />
             <SelectFilter
               label="Status"
               items={statusOptions}
-              defaultValue={statusOptions[0].value}
-              onValueChange={() => {}}
+              defaultValue={activeStockStatus}
+              onValueChange={handleStatusDropdownChange}
             />
-            <MultiSelectWithSearch columns={table.getAllColumns()} label="Show/Hide Columns" />
+            <MultiSelectWithSearch columns={[]} label="Show/Hide Columns" />
+
+            {/* ── Right: Actions + Add Item ── */}
+            <div className="flex items-center gap-2 ml-auto">
+              <ActionsDropdown
+                onUpdateStock={() => setShowUpdateStockModal(true)}
+                onStockTransfer={() => setShowStockTransferModal(true)}
+              />
+              <button
+                onClick={toggleAddInventoryItemModal}
+                className="flex items-center gap-1.5 bg-[#7047EB] hover:bg-[#5f3bcc] text-white text-sm font-medium px-4 py-[7px] rounded-md h-8 transition-colors shadow-sm"
+              >
+                <Plus className="w-4 h-4" />
+                Add Item
+              </button>
+            </div>
           </>
         )}
+      />
+
+      {/* ── Modals ────────────────────────────────────────────────────────── */}
+
+      <UpdateProductStockModal
+        isOpen={showUpdateStockModal}
+        onClose={() => setShowUpdateStockModal(false)}
+        items={itemData.map((i) => ({
+          id: i.id as number,
+          name: i.name,
+          sku: i.sku,
+          currentStock: Number(i.currentStock),
+          defaultPrice: i.defaultPrice,
+          unit: i.unit,
+        }))}
+      />
+
+      <CreateStockTransferModal
+        isOpen={showStockTransferModal}
+        onClose={() => setShowStockTransferModal(false)}
       />
 
       <AddInventoryItemModal
@@ -218,418 +388,14 @@ const ItemMaster: React.FC = () => {
         showAddWarehouseModal={toggleAddWarehouseModal}
         showShowCategoriesModal={toggleAddCategoriesModal}
         currentItemNo={maxID + 1}
+        onItemAdded={handleRefreshItemTable}
       />
 
       <AddUnitOfMeasurementModal isOpen={showAddUnitOfMeasurementModal} onClose={toggleAddUnitOfMeasurementModal} />
-
-      <AddCategoriesModal isOpen={showAddCategoriesModal} onClose={toggleAddCategoriesModal} onSuccess={handleRefreshCategoriesTable} />
-
-      <AddWarehouseModal isOpen={showAddWarehouseModal} onClose={toggleAddWarehouseModal} onSuccess={handleRefreshWarehouseTable} />
-
-      {/* Barcode Modal - same sliding modal style as AddInventoryItemModal */}
-      <BarcodeModal
-        isOpen={barcodeModalOpen}
-        onClose={() => {
-          setBarcodeModalOpen(false);
-          // optional: refresh items to update any stock changes
-          fetchInventoryItems();
-        }}
-        itemId={barcodeModalItem.itemId}
-        itemName={barcodeModalItem.itemName}
-        internalItemId={barcodeModalItem.id}
-      />
+      <AddCategoriesModal isOpen={showAddCategoriesModal} onClose={toggleAddCategoriesModal} onSuccess={() => {}} />
+      <AddWarehouseModal isOpen={showAddWarehouseModal} onClose={toggleAddWarehouseModal} onSuccess={() => {}} />
     </>
   );
 };
 
 export default ItemMaster;
-
-interface IBarcodeModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  itemId: string;
-  itemName: string;
-  internalItemId: number | null;
-}
-
-const BarcodeModal: React.FC<IBarcodeModalProps> = ({ isOpen, onClose, itemId, itemName, internalItemId }) => {
-  const modalRef = useRef<HTMLDivElement>(null);
-
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
-  const [excelFile, setExcelFile] = useState<File | null>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      const isSelectComponent =
-        target.closest('[role="combobox"]') ||
-        target.closest('[role="listbox"]') ||
-        target.closest("[data-radix-popper-content-wrapper]");
-
-      if (modalRef.current && !modalRef.current.contains(target) && !isSelectComponent) {
-        onClose();
-      }
-    };
-
-    if (isOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [isOpen, onClose]);
-
-  const downloadSampleExcel = () => {
-    // Create sample data for bulk barcode upload
-    const sampleData = [
-      {
-        prefix: "BAT",
-        quantity: 100,
-        suffix: "",
-        manufacturingDate: "2024-12-01",
-        expiryDate: "2025-12-01",
-        info1: "Batch A",
-        info2: "Warehouse 1",
-        isActive: "true"
-      },
-      {
-        prefix: "BAT",
-        quantity: 50,
-        suffix: "SPECIAL",
-        manufacturingDate: "2024-12-01",
-        expiryDate: "2025-06-01",
-        info1: "Batch B",
-        info2: "Warehouse 2",
-        isActive: "true"
-      }
-    ];
-
-    // Convert to CSV format
-    const headers = ["prefix", "quantity", "suffix", "manufacturingDate", "expiryDate", "info1", "info2", "isActive"];
-    const csvContent = [
-      headers.join(","),
-      ...sampleData.map(row => headers.map(header => row[header as keyof typeof row]).join(","))
-    ].join("\n");
-
-    const blob = new Blob([csvContent], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `barcode_bulk_template_${itemId}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      // Validate file type
-      const validTypes = [
-        'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'text/csv'
-      ];
-      
-      if (!validTypes.includes(file.type) && !file.name.endsWith('.csv') && !file.name.endsWith('.xlsx')) {
-        setError("Please upload a valid Excel or CSV file");
-        return;
-      }
-      
-      setExcelFile(file);
-      setError(null);
-      
-      // TODO: Implement bulk upload logic here
-      console.log("File selected for bulk upload:", file.name);
-    }
-  };
-
-  const handleBulkUpload = async () => {
-    if (!excelFile) {
-      setError("Please select a file to upload");
-      return;
-    }
-
-    setIsSubmitting(true);
-
-    try {
-      // TODO: Implement bulk upload API call in separate service file
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      SuccessToast({
-        title: "Bulk barcodes generated successfully.",
-        description: "Barcodes created successfully.",
-      });
-
-      onClose();
-    } catch (err: any) {
-      console.error("Bulk barcode upload error:", err);
-      setError(err?.message || "Failed to upload bulk barcodes.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormErrors({});
-    setError(null);
-    setIsSubmitting(true);
-
-    const form = e.currentTarget as HTMLFormElement;
-    const fd = new FormData(form);
-
-    const validation: Record<string, string> = {};
-    if (!fd.get("prefix")) validation.prefix = "Prefix is required";
-    if (!fd.get("quantity") || Number(fd.get("quantity")) <= 0) validation.quantity = "Quantity must be greater than 0";
-
-    if (Object.keys(validation).length) {
-      setFormErrors(validation);
-      setIsSubmitting(false);
-      return;
-    }
-
-    const payload = {
-      itemId: internalItemId ? parseInt(internalItemId.toString()) : parseInt(itemId),
-      prefix: String(fd.get("prefix") || ""),
-      quantity: fd.get("quantity") ? Number(fd.get("quantity")) : undefined,
-      suffix: String(fd.get("suffix") || "") || undefined,
-      manufacturingDate: String(fd.get("manufacturingDate") || "") || undefined,
-      expiryDate: String(fd.get("expiryDate") || "") || undefined,
-      info1: String(fd.get("info1") || "") || undefined,
-      info2: String(fd.get("info2") || "") || undefined,
-      isActive: fd.get("isActive") === "true"
-    };
-
-    try {
-      await post("/barcode", payload);
-
-      SuccessToast({
-        title: "Barcode generated successfully.",
-        description: "",
-      });
-
-      onClose();
-    } catch (err: any) {
-      console.error("Barcode generate error:", err);
-      setError(err?.message || "Failed to generate barcode.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex justify-end z-50">
-      <div ref={modalRef} className="bg-white w-full max-w-xl animate-in fade-in duration-200">
-        <form onSubmit={handleSubmit}>
-          {/* Header */}
-          <div className="px-6 bg-neutral-100/90 py-4 flex items-center justify-between">
-            <h3 className="text-lg font-semibold">Generate Barcode</h3>
-            <div className="flex gap-2">
-              <Button onClick={onClose} type="button" variant="outline" className="h-8">
-                Cancel
-              </Button>
-              <Button 
-                type="submit" 
-                disabled={isSubmitting} 
-                className="bg-[#7047EB] h-8"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="w-3 h-3 animate-spin mr-1" />
-                    Generating...
-                  </>
-                ) : (
-                  "Generate"
-                )}
-              </Button>
-            </div>
-          </div>
-
-          {error && (
-            <div className="px-6 py-3 bg-red-50 border-b border-red-200 text-red-700 text-sm">
-              {error}
-            </div>
-          )}
-
-          {/* Body */}
-          <div className="px-6 py-4 space-y-4 max-h-[calc(100vh-80px)] overflow-y-auto">
-
-            {/* Item ID & Name */}
-            <div className="flex gap-4">
-              <div className="w-full space-y-1">
-                <Label className={labelClasses}>Item ID</Label>
-                <Input value={itemId} readOnly className={inputClasses} />
-              </div>
-              <div className="w-full space-y-1">
-                <Label className={labelClasses}>Item Name</Label>
-                <Input value={itemName} readOnly className={inputClasses} />
-              </div>
-            </div>
-
-            {/* Prefix & Suffix */}
-            <div className="flex gap-4">
-              <div className="w-full space-y-1">
-                <Label className={labelClasses}>
-                  Prefix
-                  <span className="text-[#F53D6B] ml-1">*</span>
-                </Label>
-                <Input 
-                  name="prefix" 
-                  className={inputClasses} 
-                  placeholder="e.g. BAT" 
-                />
-                {formErrors.prefix && <p className="text-red-500 text-xs">{formErrors.prefix}</p>}
-              </div>
-              <div className="w-full space-y-1">
-                <Label className={labelClasses}>Suffix (Optional)</Label>
-                <Input 
-                  name="suffix" 
-                  className={inputClasses} 
-                  placeholder="Custom suffix" 
-                />
-              </div>
-            </div>
-
-            {/* Barcode Format Helper */}
-            <div className="space-y-1">
-              <p className="text-xs text-gray-500">
-                Barcode format: PREFIX-ITEMID-SEQUENCE (e.g., BAT-{itemId}-000001)
-              </p>
-            </div>
-
-            {/* Quantity */}
-            <div className="space-y-1">
-              <Label className={labelClasses}>
-                Quantity
-                <span className="text-[#F53D6B] ml-1">*</span>
-              </Label>
-              <Input 
-                name="quantity" 
-                type="number" 
-                className={inputClasses} 
-                min={1} 
-                placeholder="Enter quantity"
-              />
-              {formErrors.quantity && <p className="text-red-500 text-xs">{formErrors.quantity}</p>}
-            </div>
-
-            {/* Manufacturing & Expiry Dates */}
-            <div className="flex gap-4">
-              <div className="w-full space-y-1">
-                <Label className={labelClasses}>Manufacturing Date (Optional)</Label>
-                <Input name="manufacturingDate" type="date" className={inputClasses} />
-              </div>
-              <div className="w-full space-y-1">
-                <Label className={labelClasses}>Expiry Date (Optional)</Label>
-                <Input name="expiryDate" type="date" className={inputClasses} />
-              </div>
-            </div>
-
-            {/* Additional Info Fields */}
-            <div className="flex gap-4">
-              <div className="w-full space-y-1">
-                <Label className={labelClasses}>Info 1 (Optional)</Label>
-                <Input 
-                  name="info1" 
-                  className={inputClasses} 
-                  placeholder="Additional information 1" 
-                />
-              </div>
-              <div className="w-full space-y-1">
-                <Label className={labelClasses}>Info 2 (Optional)</Label>
-                <Input 
-                  name="info2" 
-                  className={inputClasses} 
-                  placeholder="Additional information 2" 
-                />
-              </div>
-            </div>
-
-            {/* Status */}
-            <div className="space-y-1">
-              <Label className={labelClasses}>Status</Label>
-              <Select name="isActive" defaultValue="true">
-                <SelectTrigger className={inputClasses}>
-                  <SelectValue placeholder="Select status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="true">Active</SelectItem>
-                  <SelectItem value="false">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Divider */}
-            <div className="border-t border-gray-200 my-4"></div>
-
-            {/* Bulk Upload Section - Simple version */}
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <Label className={labelClasses}>Bulk Upload (Optional)</Label>
-                <p className="text-xs text-gray-500 mb-3">
-                  Upload Excel/CSV file to generate multiple barcodes at once
-                </p>
-                
-                <div className="flex gap-3 items-center">
-                  <div className="flex-1">
-                    <Input
-                      type="file"
-                      accept=".xlsx,.xls,.csv"
-                      onChange={handleFileUpload}
-                      className={inputClasses}
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={handleBulkUpload}
-                    disabled={!excelFile || isSubmitting}
-                    variant="outline"
-                    className="whitespace-nowrap"
-                  >
-                    {isSubmitting ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      "Upload File"
-                    )}
-                  </Button>
-                </div>
-                
-                {excelFile && (
-                  <p className="text-xs text-green-600 mt-1">
-                    Selected: {excelFile.name}
-                  </p>
-                )}
-              </div>
-
-              {/* Download Sample */}
-              <div className="space-y-2">
-                <Label className={labelClasses}>Download Template</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={downloadSampleExcel}
-                  className="w-full"
-                >
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  Download Sample Template
-                </Button>
-                <p className="text-xs text-gray-500">
-                  Download the template file, fill in your barcode data, and upload the completed file.
-                </p>
-              </div>
-            </div>
-
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-};

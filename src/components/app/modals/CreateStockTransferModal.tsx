@@ -122,58 +122,86 @@ const CreateStockTransferModal: React.FC<IModalProps> = ({
   };
 
   const handleSubmit = async () => {
-    if (!validateFields()) {
-      return;
-    }
+  if (!validateFields()) {
+    return;
+  }
 
-    try {
-      setIsLoading(true);
-      const payload = {
-        itemId: Number(itemId),
-        fromWarehouseId: Number(fromWarehouseId),
-        toWarehouseId: Number(toWarehouseId),
-        quantity: Number(quantity),
-      };
+  try {
+    setIsLoading(true);
+    const payload = {
+      itemId: Number(itemId),
+      fromWarehouseId: Number(fromWarehouseId),
+      toWarehouseId: Number(toWarehouseId),
+      quantity: Number(quantity),
+    };
 
-    
-      const result = await post("/inventory/transfer", payload);
-      console.log("Transfer result:", result);
+    const result = await post("/inventory/transfer", payload);
+    console.log("Transfer result:", result);
 
-      if (result.status) {
-        SuccessToast({
-          title: "Success",
-          description: "Stock transfer request created ",
-        });
-        // Reset form
-        setItemId("");
-        setFromWarehouseId("");
-        setToWarehouseId("");
-        setQuantity(0);
-        setErrors({
-          itemId: "",
-          fromWarehouseId: "",
-          toWarehouseId: "",
-          quantity: "",
-        });
-        onClose();
-      } else {
-        ErrorToast({
-          title: "Error",
-          description:
-            result?.message || "Failed to create transfer stock request",
-        });
-      }
-    } catch (err) {
-      console.error("Failed to create transfer stock request:", err);
-      ErrorToast({
-        title: "Error",
-        description:
-          "Failed to create transfer stock request. Please try again.",
+    if (result.status) {
+      SuccessToast({
+        title: "Success",
+        description: "Stock transfer request created successfully",
       });
-    } finally {
-      setIsLoading(false);
+      // Reset form
+      setItemId("");
+      setFromWarehouseId("");
+      setToWarehouseId("");
+      setQuantity(0);
+      setErrors({
+        itemId: "",
+        fromWarehouseId: "",
+        toWarehouseId: "",
+        quantity: "",
+      });
+      onClose();
+    } else {
+      // Show the actual error message from API
+      const errorMessage = result?.message || "Failed to create transfer stock request";
+      
+      ErrorToast({
+        title: "Transfer Failed",
+        description: errorMessage,
+      });
+      
+      // Also show as a form error for better UX
+      if (errorMessage.includes("Insufficient stock")) {
+        setErrors(prev => ({
+          ...prev,
+          quantity: errorMessage // Show the error under quantity field
+        }));
+      }
     }
-  };
+  } catch (err: any) {
+    console.error("Failed to create transfer stock request:", err);
+    
+    // Extract error message from different error formats
+    let errorMessage = "Failed to create transfer stock request. Please try again.";
+    
+    if (err?.response?.data?.message) {
+      errorMessage = err.response.data.message;
+    } else if (err?.message) {
+      errorMessage = err.message;
+    } else if (typeof err === 'string') {
+      errorMessage = err;
+    }
+    
+    ErrorToast({
+      title: "Error",
+      description: errorMessage,
+    });
+    
+    // Show as form error if it's about insufficient stock
+    if (errorMessage.includes("Insufficient stock")) {
+      setErrors(prev => ({
+        ...prev,
+        quantity: errorMessage
+      }));
+    }
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const handleClose = () => {
     if (!isLoading) {

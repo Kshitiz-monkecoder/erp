@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect,  useState } from "react";
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -11,7 +11,6 @@ import {
   getSortedRowModel,
   getPaginationRowModel,
   RowData,
-  // SortingState,
   useReactTable,
 } from "@tanstack/react-table";
 import { Edit, PlusIcon } from "lucide-react";
@@ -24,21 +23,19 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "../../ui/button";
-// import SelectFilter, { OptionType } from "../SelectFilter";
 import MultiSelectWithSearch from "../MultiSelectWithSearch";
 import { IModalProps } from "@/lib/types";
 import TableLoading from "../TableLoading";
 import { categoryType } from "@/pages/Inventory";
 import TablePagenation from "../TablePagenation";
-import {get} from "../../../lib/apiService"
+import { get } from "../../../lib/apiService";
+
 declare module "@tanstack/react-table" {
-  //allows us to define custom properties for our columns
   interface ColumnMeta<TData extends RowData, TValue> {
     filterVariant?: "text" | "range" | "select";
   }
 }
 
-// TODO: change the types here according to values
 type Item = {
   id: number;
   name: string;
@@ -50,35 +47,48 @@ type Item = {
 interface CategoriesMasterTableProps extends Omit<IModalProps, "isOpen"> {
   toggleDeleteCategoryModal: () => void;
   toggleEditCategoryModal: (category: categoryType) => void;
-  refreshTrigger?: number;
+  refreshTrigger?: number; // Add this prop
+  onSuccess?: () => void; // Add callback for success
 }
 
 const CategoriesMasterTable: React.FC<CategoriesMasterTableProps> = ({
   onClose,
-  // toggleDeleteCategoryModal,
-  toggleEditCategoryModal
+  toggleEditCategoryModal,
+  refreshTrigger = 0, // Default value
+  onSuccess, // Callback for when data is refreshed
 }) => {
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [items, setItems] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  const fetchCategories = useMemo(
-    () => async () => {
-      try {
-        setIsLoading(true);
-        const  data  = await get('/inventory/categories');
-        console.log(data);
-        setItems(data.data);
-      } catch (error) {
-        console.error("Error fetching data:", error);
-      } finally {
-        setIsLoading(false);
+  // Create a proper fetch function that can be called from outside
+  const fetchCategories = async () => {
+    try {
+      setIsLoading(true);
+      const response = await get('/inventory/categories');
+      console.log("Fetched categories:", response);
+      
+      // Handle different response structures
+      const categories = response?.data || [];
+      setItems(categories);
+      
+      // Call onSuccess callback if provided
+      if (onSuccess) {
+        onSuccess();
       }
-    },
-    [],
-  );
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-   const columns: ColumnDef<Item>[] = [
+  // Fetch categories on component mount and when refreshTrigger changes
+  useEffect(() => {
+    fetchCategories();
+  }, [refreshTrigger]); // Add refreshTrigger to dependency array
+
+  const columns: ColumnDef<Item>[] = [
     {
       header: "Id",
       accessorKey: "id",
@@ -128,9 +138,6 @@ const CategoriesMasterTable: React.FC<CategoriesMasterTableProps> = ({
       },
     },
   ];
-  useEffect(() => {
-    fetchCategories();
-  }, [fetchCategories]);
 
   const table = useReactTable({
     data: items,
@@ -160,26 +167,12 @@ const CategoriesMasterTable: React.FC<CategoriesMasterTableProps> = ({
     enableSortingRemoval: false,
   });
 
-  // const itemStaus: OptionType[] = [
-  //   { label: "All", value: "all" },
-  //   { label: "All Items With Balance Qty", value: "all-in-with-balance" },
-  //   { label: "All Items In", value: "all-in" },
-  //   { label: "All Items Out", value: "all-out" },
-  // ];
   return (
     <div>
       <div className="space-y-6">
         <section className="px-5">
           <div className="flex justify-between">
             <div className="flex flex-wrap gap-4 items-center">
-              {/* Create onValueChange to pass through these for filtering logic */}
-              {/* <SelectFilter
-                label="Item Status"
-                items={itemStaus}
-                onValueChange={(value) => {
-                  table.getColumn("itemStatus")?.setFilterValue(value);
-                }}
-              /> */}
               <MultiSelectWithSearch
                 columns={table.getAllColumns()}
                 label="Show/Hide Columns"
@@ -226,7 +219,6 @@ const CategoriesMasterTable: React.FC<CategoriesMasterTableProps> = ({
                     <TableRow
                       key={row.id}
                       data-state={row.getIsSelected() && "selected"}
-                      // TODO : add sidebar hovering effect for current page
                     >
                       {row.getVisibleCells().map((cell) => (
                         <TableCell key={cell.id} className="border">

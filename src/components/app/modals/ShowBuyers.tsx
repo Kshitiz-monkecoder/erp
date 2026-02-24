@@ -11,14 +11,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
 import {get} from "../../../lib/apiService"
 
 interface IModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelectBuyer?: (buyer: any) => void; // for ShowBuyers
-  onSelectSupplier?: (supplier: any) => void; // for ShowSuppliers
+  onSelectBuyer?: (buyer: any) => void;
+  onSelectSupplier?: (supplier: any) => void;
 }
 
 const ShowBuyers: React.FC<IModalProps> = ({
@@ -29,23 +28,32 @@ const ShowBuyers: React.FC<IModalProps> = ({
   const modalRef = useRef<HTMLDivElement>(null);
   const [buyers, setBuyers] = useState<any[]>([]);
   const [selectedBuyerId, setSelectedBuyerId] = useState<string>("");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   useEffect(() => {
     const fetchBuyers = async () => {
+      if (!isOpen) return;
+      
+      setIsLoading(true);
       try {
-       
-        const data = await get("/client");
-
-        const filteredBuyers = (data.data || []).filter(
+        const response = await get("/client");
+        console.log("API Response for buyers:", response); // Debug
+        
+        // CORRECTED: Access response.data.list instead of response.data
+        const clients = response?.data?.list || [];
+        console.log("Clients list for buyers:", clients); // Debug
+        
+        const filteredBuyers = clients.filter(
           (client: any) =>
             client.clientType === "Buyer" || client.clientType === "Both",
         );
-
+        console.log("Filtered buyers:", filteredBuyers); // Debug
+        
         setBuyers(filteredBuyers);
 
         // Set initial selected buyer after buyers are loaded
         const savedBuyer = localStorage.getItem("selectedBuyer");
-        if (savedBuyer) {
+        if (savedBuyer && filteredBuyers.length > 0) {
           try {
             const parsedBuyer = JSON.parse(savedBuyer);
             console.log("Parsed buyer from localStorage:", parsedBuyer);
@@ -64,6 +72,9 @@ const ShowBuyers: React.FC<IModalProps> = ({
         }
       } catch (error) {
         console.error("Error fetching buyers:", error);
+        setBuyers([]);
+      } finally {
+        setIsLoading(false);
       }
     };
 
@@ -74,7 +85,7 @@ const ShowBuyers: React.FC<IModalProps> = ({
     const selectedBuyer = buyers.find((b) => b.id == selectedBuyerId);
     if (selectedBuyer) {
       localStorage.setItem("selectedBuyer", JSON.stringify(selectedBuyer));
-      onSelectBuyer?.(selectedBuyer); // ✅ Call the parent callback
+      onSelectBuyer?.(selectedBuyer);
     }
   }, [selectedBuyerId, buyers, onSelectBuyer]);
 
@@ -108,26 +119,36 @@ const ShowBuyers: React.FC<IModalProps> = ({
               </Link>
             </div>
 
-            <Select
-              value={selectedBuyerId}
-              onValueChange={(value) => {
-                console.log("Selected buyer ID:", value);
-                setSelectedBuyerId(value);
-              }}
-            >
-              <SelectTrigger className={`${inputClasses} w-full`}>
-                <SelectValue placeholder="Select a Buyer" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {(buyers || []).map((buyer) => (
-                    <SelectItem key={buyer.id} value={String(buyer.id)}>
-                      {buyer.name}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+            {isLoading ? (
+              <div className="py-3 text-center text-gray-500">
+                Loading buyers...
+              </div>
+            ) : buyers.length === 0 ? (
+              <div className="py-3 text-center text-gray-500">
+                No buyers found. Please add a buyer first.
+              </div>
+            ) : (
+              <Select
+                value={selectedBuyerId}
+                onValueChange={(value) => {
+                  console.log("Selected buyer ID:", value);
+                  setSelectedBuyerId(value);
+                }}
+              >
+                <SelectTrigger className={`${inputClasses} w-full`}>
+                  <SelectValue placeholder="Select a Buyer" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {buyers.map((buyer) => (
+                      <SelectItem key={buyer.id} value={String(buyer.id)}>
+                        {buyer.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
       </div>

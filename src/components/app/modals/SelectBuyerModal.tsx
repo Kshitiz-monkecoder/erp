@@ -12,8 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-// import { useNavigate } from "react-router-dom";
 import {get} from "../../../lib/apiService"
+
 interface ISelectBuyerModalProps extends IModalProps {
   onContinue: (buyerId: string) => void;
 }
@@ -26,10 +26,15 @@ const SelectBuyerModal: React.FC<ISelectBuyerModalProps> = ({
   const modalRef = useRef<HTMLDivElement>(null);
   const [buyers, setBuyers] = useState<any[]>([]);
   const [selectedBuyerId, setSelectedBuyerId] = useState<string>("");
-  //   const navigate = useNavigate();
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    if (!selectedBuyerId) {
+      alert("Please select a buyer");
+      return;
+    }
 
     const selectedBuyer = buyers.find((s) => s.id == selectedBuyerId);
     if (selectedBuyer) {
@@ -43,17 +48,29 @@ const SelectBuyerModal: React.FC<ISelectBuyerModalProps> = ({
 
   useEffect(() => {
     const fetchBuyers = async () => {
+      if (!isOpen) return;
+      
+      setIsLoading(true);
       try {
-
-        const data = await get("/client");
-        const filteredBuyers = (data.data || []).filter(
+        const response = await get("/client");
+        console.log("API Response for buyers:", response); // Debug
+        
+        // CORRECTED: Access response.data.list instead of response.data
+        const clients = response?.data?.list || [];
+        console.log("Clients list for buyers:", clients); // Debug
+        
+        const filteredBuyers = clients.filter(
           (client: any) =>
             client.clientType === "Buyer" || client.clientType === "Both",
         );
-
+        console.log("Filtered buyers:", filteredBuyers); // Debug
+        
         setBuyers(filteredBuyers);
       } catch (error) {
         console.error("Error fetching buyers:", error);
+        setBuyers([]);
+      } finally {
+        setIsLoading(false);
       }
     };
 
@@ -94,31 +111,42 @@ const SelectBuyerModal: React.FC<ISelectBuyerModalProps> = ({
                 </Link>
               </div>
 
-              <Select
-                value={selectedBuyerId}
-                onValueChange={(value) => setSelectedBuyerId(value)}
-              >
-                <SelectTrigger className={`${inputClasses} w-full`}>
-                  <SelectValue placeholder="Select a Buyer" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {(buyers || []).map((buyer) => (
-                      <SelectItem key={buyer.id} value={String(buyer.id)}>
-                        {buyer.companyName}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              {isLoading ? (
+                <div className="py-3 text-center text-gray-500">
+                  Loading buyers...
+                </div>
+              ) : buyers.length === 0 ? (
+                <div className="py-3 text-center text-gray-500">
+                  No buyers found. Please add a buyer first.
+                </div>
+              ) : (
+                <Select
+                  value={selectedBuyerId}
+                  onValueChange={(value) => setSelectedBuyerId(value)}
+                >
+                  <SelectTrigger className={`${inputClasses} w-full`}>
+                    <SelectValue placeholder="Select a Buyer" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {buyers.map((buyer) => (
+                        <SelectItem key={buyer.id} value={String(buyer.id)}>
+                          {buyer.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             <div className="mt-6 text-right">
               <button
                 type="submit"
-                className="bg-[#7047EB] text-white px-4 py-2 rounded hover:bg-[#5c3cc2]"
+                className="bg-[#7047EB] text-white px-4 py-2 rounded hover:bg-[#5c3cc2] disabled:bg-gray-400"
+                disabled={!selectedBuyerId || isLoading}
               >
-                Continue
+                {isLoading ? "Loading..." : "Continue"}
               </button>
             </div>
           </div>

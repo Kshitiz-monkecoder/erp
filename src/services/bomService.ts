@@ -1,6 +1,9 @@
 import { get, post, put, del } from './apiService';
 
-// Types
+// ─────────────────────────────────────────────
+// Shared / Base Types
+// ─────────────────────────────────────────────
+
 export interface Item {
   id: string;
   name: string;
@@ -23,39 +26,76 @@ export interface Item {
   maximumStockLevel: string;
 }
 
+export interface Unit {
+  id: number;
+  name: string;
+  description?: string;
+  uom?: string;
+}
+
+export interface Routing {
+  id: number;
+  name: string;
+  description?: string;
+}
+
+// ─────────────────────────────────────────────
+// BOM Request Types
+// ─────────────────────────────────────────────
+
+export interface AlternateItemRequest {
+  itemId: number;
+  unitId: number;
+  quantity: number;
+  costAlloc: number;
+  comment?: string;
+}
+
+export interface FinishedGoodRequest {
+  itemId: number;
+  unitId: number;
+  quantity: number;
+  costAlloc: number;
+  comment?: string;
+  hasAlternate?: boolean;
+}
+
+export interface RawMaterialRequest {
+  itemId: number;
+  unitId: number;
+  quantity: number;
+  costAlloc: number;
+  comment?: string;
+  hasAlternate?: boolean;
+  alternateList?: AlternateItemRequest[];
+}
+
+export interface RoutingRequest {
+  routingId: number;
+  comment?: string;
+}
+
+export interface ScrapRequest {
+  itemId: number;
+  unitId: number;
+  quantity: number;
+  costAlloc: number;
+  comment?: string;
+}
+
+export interface OtherChargeRequest {
+  charges: number;
+  classification: string;
+  comment?: string;
+}
+
 export interface BOMItemRequest {
-  finishedGoods: {
-    itemId: number;
-    unitId: number;
-    quantity: number;
-    costAlloc: number;
-    comment: string;
-    hasAlternate: boolean;
-  };
-  rawMaterials: Array<{
-    itemId: number;
-    unitId: number;
-    quantity: number;
-    costAlloc: number;
-    comment: string;
-    hasAlternate: boolean;
-  }>;
-  routing: Array<{
-    routingId: number;
-    comment: string;
-  }>;
-  scrap: Array<{
-    itemId: number;
-    unitId: number;
-    quantity: number;
-    costAlloc: number;
-    comment?: string;
-  }>;
-  otherCharges: Array<{
-    charges: number;
-    classification: string;
-    comment?: string;
-  }>;
+  finishedGoods: FinishedGoodRequest;
+  subBomId?: number;           // ← Child BOM link
+  rawMaterials?: RawMaterialRequest[];
+  routing?: RoutingRequest[];
+  scrap?: ScrapRequest[];
+  otherCharges?: OtherChargeRequest[];
 }
 
 export interface BOMCreateRequest {
@@ -66,14 +106,16 @@ export interface BOMCreateRequest {
   rmStoreId: number;
   fgStoreId: number;
   scrapStoreId: number;
-  status: "draft" | "published";
+  status: 'draft' | 'published';
   docComment?: string;
   bomItems: BOMItemRequest[];
 }
 
-// Add this line - either option works:
-export interface BOMUpdateRequest extends Partial<BOMCreateRequest> {}
-// OR: export type BOMUpdateRequest = BOMCreateRequest;
+export type BOMUpdateRequest = Partial<BOMCreateRequest>;
+
+// ─────────────────────────────────────────────
+// BOM Response Types
+// ─────────────────────────────────────────────
 
 export interface BOMResponse {
   id: number;
@@ -85,49 +127,80 @@ export interface BOMResponse {
   status: string;
   createdAt: string;
   updatedAt: string;
-  rmStore: any;
-  fgStore: any;
-  scrapStore: any;
-  createdBy: any;
-  bomItems: any[];
+  rmStore: { id: number; name: string } | null;
+  fgStore: { id: number; name: string } | null;
+  scrapStore: { id: number; name: string } | null;
+  createdBy: { id: number; name: string } | null;
+  bomItems: BOMItemResponse[];
 }
 
-// API Response type
+export interface BOMItemResponse {
+  id: number;
+  finishedGoods: FinishedGoodRequest;
+  subBomId?: number;
+  rawMaterials: RawMaterialRequest[];
+  routing: RoutingRequest[];
+  scrap: ScrapRequest[];
+  otherCharges: OtherChargeRequest[];
+}
+
+// Generic API Response wrapper
 export interface APIResponse<T> {
   status: boolean;
   message: string;
   data: T;
 }
 
-// BOM API Functions
+// ─────────────────────────────────────────────
+// bomAPI — all CRUD operations
+// ─────────────────────────────────────────────
+
 export const bomAPI = {
-  // Create BOM
+  /** Create a new BOM (draft or published) */
   createBOM: async (data: BOMCreateRequest): Promise<APIResponse<BOMResponse>> => {
-    return await post("/production/bom", data);
+    return await post('/production/bom', data);
   },
 
-  // Get BOM by ID
+  /** Fetch a single BOM by ID */
   getBOM: async (id: number): Promise<APIResponse<BOMResponse>> => {
     return await get(`/production/bom/${id}`);
   },
 
-  // Get all BOMs
+  /** Fetch all BOMs */
   getAllBOMs: async (): Promise<APIResponse<BOMResponse[]>> => {
-    return await get("/production/bom");
+    return await get('/production/bom');
   },
 
-  // Update BOM
-  updateBOM: async (id: number, data: BOMUpdateRequest): Promise<APIResponse<BOMResponse>> => {
+  /** Update an existing BOM */
+  updateBOM: async (
+    id: number,
+    data: BOMUpdateRequest
+  ): Promise<APIResponse<BOMResponse>> => {
     return await put(`/production/bom/${id}`, data);
   },
-  
-  // Delete BOM
+
+  /** Delete a BOM */
   deleteBOM: async (id: number): Promise<APIResponse<{ message: string }>> => {
     return await del(`/production/bom/${id}`);
   },
 
-  // Get items for BOM
+  /** Fetch inventory items (for dropdowns) */
   getItems: async (): Promise<APIResponse<Item[]>> => {
-    return await get("/inventory/item");
-  }
+    return await get('/inventory/item');
+  },
+
+  /** Fetch units of measure (for dropdowns) */
+  getUnits: async (): Promise<APIResponse<Unit[]>> => {
+    return await get('/inventory/unit');
+  },
+
+  /** Fetch routing options */
+  getRoutings: async (): Promise<APIResponse<Routing[]>> => {
+    return await get('/production/routing');
+  },
+
+  /** Fetch warehouses / stores */
+  getWarehouses: async (): Promise<APIResponse<{ id: number; name: string }[]>> => {
+    return await get('/inventory/warehouse');
+  },
 };

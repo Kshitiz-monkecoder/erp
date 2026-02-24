@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import * as XLSX from 'xlsx';
 import { bomAPI } from "@/services/bomService";
+import SuccessToast from "../toasts/SuccessToast";
+import ErrorToast from "../toasts/ErrorToast";
 
 // Define proper TypeScript interfaces
 interface BOMDetailsType {
@@ -213,6 +215,9 @@ const BOMDetails: React.FC = () => {
   const [showBOMCost, setShowBOMCost] = useState(false);
   const [loading, setLoading] = useState(false);
   const [bomData, setBomData] = useState<ApiBOMResponse | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
   
   const [bomDetails, setBomDetails] = useState<BOMDetailsType>({
     bomId: "BOM00000",
@@ -519,19 +524,50 @@ const BOMDetails: React.FC = () => {
 
   // Handle delete BOM
   const handleDeleteBOM = async () => {
-    if (!id) return;
-    
-    if (window.confirm(`Are you sure you want to delete BOM ${bomDetails.bomId}? This action cannot be undone.`)) {
-      try {
-        const response = await bomAPI.deleteBOM(parseInt(id));
-        if (response.status) {
-          navigate("/production/bom");
-        }
-      } catch (error) {
-        console.error("Error deleting BOM:", error);
-      }
+  if (!id) return;
+  setDeleting(true);
+
+  try {
+    const response = await bomAPI.deleteBOM(parseInt(id));
+
+    if (response.status) {
+      SuccessToast({
+        title: "BOM deleted successfully",
+        description: `BOM ${bomDetails.bomId} has been removed.`,
+      });
+
+      navigate("/production/bom");
     }
-  };
+  } catch (error: any) {
+    console.error("Error deleting BOM:", error);
+
+    const apiMessage =
+      error?.response?.data?.message ||
+      error?.message ||
+      "Failed to delete BOM";
+
+    // ⭐ Detect “being used” errors — adjust if your API text differs
+    if (
+      apiMessage.toLowerCase().includes("used") ||
+      apiMessage.toLowerCase().includes("reference") ||
+      error?.response?.status === 409
+    ) {
+      ErrorToast({
+        title: "Deletion Not Allowed",
+        description:
+          "This BOM cannot be deleted because it is being used in another document.",
+      });
+    } else {
+      ErrorToast({
+        title: "Error deleting BOM",
+        description: apiMessage,
+      });
+    }
+  } finally {
+    setDeleting(false);
+    setShowDeleteModal(false);
+  }
+};
 
   // Handle edit BOM
   const handleEditBOM = () => {
@@ -641,13 +677,14 @@ const BOMDetails: React.FC = () => {
 
               {/* Delete Button - Icon Only */}
               <Button 
-                variant="outline"
-                onClick={handleDeleteBOM}
-                className="p-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
-                title="Delete BOM"
-              >
-                <Trash2 className="w-4 h-4" />
-              </Button>
+  variant="outline"
+  onClick={() => setShowDeleteModal(true)}
+  className="p-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+  title="Delete BOM"
+>
+  <Trash2 className="w-4 h-4" />
+</Button>
+
             </div>
           </div>
         </div>
@@ -1101,6 +1138,39 @@ const BOMDetails: React.FC = () => {
           </div>
         </div>
       </div>
+      {showDeleteModal && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+      <h3 className="text-lg font-semibold text-gray-900">
+        Delete BOM {bomDetails.bomId}?
+      </h3>
+
+      <p className="text-sm text-gray-600 mt-2">
+        This action cannot be undone. If this BOM is used in another document,
+        deletion will not be allowed.
+      </p>
+
+      <div className="mt-6 flex justify-end gap-3">
+        <Button
+          variant="outline"
+          onClick={() => setShowDeleteModal(false)}
+          disabled={deleting}
+        >
+          Cancel
+        </Button>
+
+        <Button
+          className="bg-red-600 hover:bg-red-700 text-white"
+          onClick={handleDeleteBOM}
+          disabled={deleting}
+        >
+          {deleting ? "Deleting..." : "Delete"}
+        </Button>
+      </div>
+    </div>
+  </div>
+)}
+
     </div>
   );
 };
