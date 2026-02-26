@@ -1,4 +1,9 @@
-// src/components/app/modals/BarcodeDialog.tsx
+// src/components/app/modals/BarcodeDialogue.tsx
+//
+// Supports two modes driven by the `sourceType` prop:
+//   "GRN" → POST /inventory/grn/barcodes/bulk
+//   "FG"  → POST /production/fg/barcodes/bulk
+//
 import { useEffect, useState } from "react";
 import {
   Dialog,
@@ -10,233 +15,289 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ArrowLeft, Plus, Minus } from "lucide-react";
 import { post } from "@/lib/apiService";
+import { toast } from "sonner";
+import type { BarcodeSourceType } from "@/components/ui/storeIssueApprove";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Item shape passed in from parent (StoreIssueApprovalDialog or GRN page)
+// ─────────────────────────────────────────────────────────────────────────────
+export interface BarcodeItem {
+  /**
+   * For GRN: grnItemId (sent as grnItemId in payload).
+   * For FG:  production FG record ID (sent as fgId in payload).
+   */
+  id: string | number;
+  /**
+   * For GRN: same as id (or grnItem's linked itemId).
+   * For FG:  actual inventory item ID (sent as itemId in payload).
+   */
+  itemId: string | number;
+  /** Display code shown in the table */
+  itemCode: string;
+  description: string;
+  quantity: number;
+  unit: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal row
+// ─────────────────────────────────────────────────────────────────────────────
 interface BarcodeRow {
-  id: string;
-  itemId: string;
-  itemName: string;
-  quantity: number; // mainQuantity for main row, 1 for split rows
+  rowId: string;
+  /** For GRN: grnItemId. For FG: productionFGRecordId */
+  recordId: string | number;
+  /** Real inventory item ID used in the API payload */
+  apiItemId: string | number;
+  displayCode: string;
+  displayName: string;
+  quantity: number;
   prefix: string;
   serial: string;
   mfgDate: string;
   expiryDate: string;
-  info1: string; // maps to comment
-  info2: string; // maps to info
+  comment: string;
+  info: string;
   isMain?: boolean;
-  parentId?: string;
-  rawItem?: any; // hold original GRN item object
+  parentRowId?: string;
+  raw?: BarcodeItem;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Props
+// ─────────────────────────────────────────────────────────────────────────────
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** "GRN" | "FG" — controls endpoint + payload shape */
+  sourceType: BarcodeSourceType;
+  /** GRN mode: the GRN document ID */
   grnId?: number | string | null;
-  items?: any[]; // GRN items array from API
+  /** FG mode: the production process numeric ID */
+  productionId?: number | null;
+  /** FG mode: FG store / warehouse ID (maps to warehouseId in payload) */
+  warehouseId?: number | null;
+  /** Items pre-populated from parent */
+  items?: BarcodeItem[];
+  /** Shown in dialog title, e.g. "PROD-1772040191163" */
+  referenceLabel?: string;
 };
 
-export default function BarcodeDialog({ open, onOpenChange, grnId = null, items = [] }: Props) {
-  // Build initial rows from GRN items
-  const buildInitialRows = (): BarcodeRow[] => {
-    if (!Array.isArray(items) || items.length === 0) {
-      // fallback: empty single row placeholder
-      return [
-        {
-          id: "main-0",
-          itemId: "ITEM-0",
-          itemName: "Item 0",
-          quantity: 0,
-          prefix: "",
-          serial: "",
-          mfgDate: "",
-          expiryDate: "",
-          info1: "",
-          info2: "",
-          isMain: true,
-          rawItem: null,
-        },
-      ];
-    }
+// ─────────────────────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────────────────────
+export default function BarcodeDialog({
+  open,
+  onOpenChange,
+  sourceType,
+  grnId = null,
+  productionId = null,
+  warehouseId = null,
+  items = [],
+  referenceLabel = "",
+}: Props) {
 
-    return items.map((it: any, idx: number) => ({
-      id: `main-${it.id ?? idx}`,
-      itemId: it?.itemCode ?? it?.itemId ?? `ITM-${it.id ?? idx}`,
-      itemName: it?.description ?? it?.name ?? `Item ${idx + 1}`,
-      quantity: Number(it?.accepted ?? it?.quantity ?? 0),
-      prefix: "",
-      serial: "",
-      mfgDate: it?.manufacturingDate ?? "",
-      expiryDate: it?.expiryDate ?? "",
-      info1: "",
-      info2: "",
+  // ── Build initial rows from items prop ────────────────────────────────────
+  const buildRows = (): BarcodeRow[] => {
+    if (!items.length) {
+      return [{
+        rowId: "main-0", recordId: 0, apiItemId: 0,
+        displayCode: "ITEM-0", displayName: "Item 0",
+        quantity: 0, prefix: "", serial: "",
+        mfgDate: "", expiryDate: "", comment: "", info: "",
+        isMain: true,
+      }];
+    }
+    return items.map((it, idx) => ({
+      rowId:       `main-${it.id ?? idx}`,
+      recordId:    it.id,
+      apiItemId:   it.itemId,
+      displayCode: it.itemCode   || `ITM-${idx + 1}`,
+      displayName: it.description || `Item ${idx + 1}`,
+      quantity:    Number(it.quantity ?? 0),
+      prefix: "", serial: "", mfgDate: "", expiryDate: "", comment: "", info: "",
       isMain: true,
-      rawItem: it,
+      raw: it,
     }));
   };
 
-  const [rows, setRows] = useState<BarcodeRow[]>(buildInitialRows());
-  const [showPrefixDialog, setShowPrefixDialog] = useState(false);
-  const [globalPrefix, setGlobalPrefix] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [rows,             setRows]             = useState<BarcodeRow[]>(buildRows);
+  const [prefixDialogOpen, setPrefixDialogOpen] = useState(false);
+  const [globalPrefix,     setGlobalPrefix]     = useState("");
+  const [isGenerating,     setIsGenerating]     = useState(false);
 
-  // keep rows in sync when items prop changes
+  // Sync rows when items change (e.g. dialog reopened with different data)
   useEffect(() => {
-    setRows(buildInitialRows());
+    setRows(buildRows());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(items)]);
 
-  // Helpers
-  const updateField = (id: string, field: keyof BarcodeRow, value: any) => {
-    setRows(prev => prev.map(r => (r.id === id ? { ...r, [field]: value } : r)));
-  };
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const update = (rowId: string, field: keyof BarcodeRow, value: any) =>
+    setRows(prev => prev.map(r => r.rowId === rowId ? { ...r, [field]: value } : r));
 
-  const clearAllBarcode = () => {
-    setRows(prev => prev.map(r => ({ ...r, prefix: "", serial: "", info1: "", info2: "" })));
-  };
+  const clearAll = () =>
+    setRows(prev => prev.map(r => ({ ...r, prefix: "", serial: "", comment: "", info: "" })));
 
   const applyGlobalPrefix = () => {
     setRows(prev => prev.map(r => ({ ...r, prefix: globalPrefix })));
-    setShowPrefixDialog(false);
+    setPrefixDialogOpen(false);
   };
 
-  // Auto-fill serials for child rows using main.serial as base
   const autoFillSerials = () => {
-    const mainRow = rows.find(r => r.isMain);
-    if (!mainRow || !mainRow.serial) return;
-
-    const starting = parseInt(mainRow.serial, 10) || 0;
-    const padLen = mainRow.serial.length;
-
-    // gather children that follow mainRow (parentId matches)
-    const children = rows.filter(r => r.parentId === mainRow.id);
-
-    // if no children, nothing to fill
-    if (children.length === 0) return;
-
-    setRows(prev =>
-      prev.map(r => {
-        if (!r.parentId) return r;
-        // child's index among children
-        const idx = children.findIndex(c => c.id === r.id);
-        const serialNum = starting + idx + 1; // +1 start after main
-        let s = String(serialNum);
-        if (padLen > s.length) s = s.padStart(padLen, "0");
-        return { ...r, serial: s };
-      })
-    );
+    const main = rows.find(r => r.isMain);
+    if (!main?.serial) return;
+    const start  = parseInt(main.serial, 10) || 0;
+    const padLen = main.serial.length;
+    const kids   = rows.filter(r => r.parentRowId === main.rowId);
+    if (!kids.length) return;
+    setRows(prev => prev.map(r => {
+      if (!r.parentRowId) return r;
+      const idx = kids.findIndex(c => c.rowId === r.rowId);
+      let s = String(start + idx + 1);
+      if (padLen > s.length) s = s.padStart(padLen, "0");
+      return { ...r, serial: s };
+    }));
   };
 
-  // Split main row into up to N child rows (we create min(quantity, 9) in one click)
-  const splitIntoIndividual = (mainId: string, maxCreate = 9) => {
-    const mainRow = rows.find(r => r.id === mainId);
-    if (!mainRow || mainRow.quantity <= 0) return;
-
-    const existingChildCount = rows.filter(r => r.parentId === mainId).length;
-    const remaining = mainRow.quantity;
-    const toCreate = Math.min(remaining, maxCreate);
-
-    const newSplits: BarcodeRow[] = [];
-    for (let i = 1; i <= toCreate; i++) {
-      const idx = existingChildCount + i;
-      newSplits.push({
-        id: `split-${mainId}-${idx}`,
-        itemId: "", // will display parent's id in UI
-        itemName: "", // display parent's name
-        quantity: 1,
-        prefix: mainRow.prefix,
-        serial: "", // filled by user or auto-fill
-        mfgDate: mainRow.mfgDate,
-        expiryDate: mainRow.expiryDate,
-        info1: mainRow.info1,
-        info2: mainRow.info2,
-        parentId: mainId,
-        rawItem: mainRow.rawItem,
-      });
-    }
-
+  // ── Split / Merge ─────────────────────────────────────────────────────────
+  const splitRow = (mainRowId: string, count = 1) => {
+    const main = rows.find(r => r.rowId === mainRowId);
+    if (!main || main.quantity <= 0) return;
+    const existingKids = rows.filter(r => r.parentRowId === mainRowId).length;
+    const toCreate     = Math.min(main.quantity, count);
+    const splits: BarcodeRow[] = Array.from({ length: toCreate }, (_, i) => ({
+      rowId:       `split-${mainRowId}-${existingKids + i + 1}`,
+      recordId:    main.recordId,
+      apiItemId:   main.apiItemId,
+      displayCode: "",
+      displayName: "",
+      quantity:    1,
+      prefix:      main.prefix,
+      serial:      "",
+      mfgDate:     main.mfgDate,
+      expiryDate:  main.expiryDate,
+      comment:     main.comment,
+      info:        main.info,
+      parentRowId: mainRowId,
+      raw:         main.raw,
+    }));
     setRows(prev =>
       prev
-        .map(r => (r.id === mainId ? { ...r, quantity: Math.max(0, r.quantity - toCreate) } : r))
-        .concat(newSplits)
+        .map(r => r.rowId === mainRowId ? { ...r, quantity: Math.max(0, r.quantity - toCreate) } : r)
+        .concat(splits)
     );
   };
 
-  // Merge child back into parent (increase parent quantity and remove child)
-  const mergeBack = (splitId: string) => {
-    const splitRow = rows.find(r => r.id === splitId);
-    if (!splitRow || !splitRow.parentId) return;
-
-    const parentId = splitRow.parentId;
+  const mergeBack = (splitRowId: string) => {
+    const split = rows.find(r => r.rowId === splitRowId);
+    if (!split?.parentRowId) return;
     setRows(prev =>
       prev
-        .map(r => (r.id === parentId ? { ...r, quantity: r.quantity + 1 } : r))
-        .filter(r => r.id !== splitId)
+        .map(r => r.rowId === split.parentRowId ? { ...r, quantity: r.quantity + 1 } : r)
+        .filter(r => r.rowId !== splitRowId)
     );
   };
 
-  // Build payload and call POST /grn/barcodes/bulk
+  // ── Payload builders ──────────────────────────────────────────────────────
+
+  /** POST /inventory/grn/barcodes/bulk */
+  const buildGRNPayload = (prepared: BarcodeRow[]) => ({
+    grnId: Number(grnId),
+    barcodes: prepared.map(r => ({
+      grnItemId:         Number(r.recordId),
+      itemId:            r.apiItemId,
+      barcodeNumber:     `${r.prefix}${r.serial}`.trim(),
+      mainQuantity:      r.isMain ? Number(r.quantity) : 1,
+      comment:           r.comment    || null,
+      info:              r.info        || null,
+      manufacturingDate: r.mfgDate    || null,
+      expiryDate:        r.expiryDate || null,
+      linkedId:          null,
+    })),
+  });
+
+  /** POST /production/fg/barcodes/bulk */
+  const buildFGPayload = (prepared: BarcodeRow[]) => ({
+    productionId: Number(productionId),
+    warehouseId:  Number(warehouseId),
+    barcodes: prepared.map(r => ({
+      fgId:              Number(r.recordId),  // production FG record ID
+      itemId:            r.apiItemId,          // actual inventory item ID
+      barcodeNumber:     `${r.prefix}${r.serial}`.trim(),
+      mainQuantity:      r.isMain ? Number(r.quantity) : 1,
+      comment:           r.comment    || null,
+      manufacturingDate: r.mfgDate    || null,
+      expiryDate:        r.expiryDate || null,
+    })),
+  });
+
+  // ── Generate ──────────────────────────────────────────────────────────────
   const handleGenerate = async () => {
-    if (!grnId) {
-      alert("Missing grnId");
+    if (sourceType === "GRN" && !grnId) {
+      toast.error("Missing GRN ID"); return;
+    }
+    if (sourceType === "FG" && (!productionId || !warehouseId)) {
+      toast.error("Missing production ID or warehouse ID"); return;
+    }
+
+    const prepared = rows.filter(r =>
+      r.isMain
+        ? r.quantity > 0 && (r.serial.trim() || r.prefix.trim())
+        : r.serial.trim() || r.prefix.trim()
+    );
+
+    if (!prepared.length) {
+      toast.error("No rows ready — fill prefix/serial or split items.");
       return;
     }
 
-    // Validate entries: each row must have prefix+serial (or at least main rows must)
-    // We'll include all rows that have a non-empty barcode (prefix+serial) OR are main with quantity>0 and no splits (support bulk quantity)
-    const prepared = rows
-      .filter(r => {
-        // include if main and has quantity and (serial or will be created single quantity)
-        // or child rows that have serial
-        if (r.isMain) {
-          // If main has quantity > 0 and serial provided -> we create barcode with that quantity
-          return r.quantity > 0 && (r.serial.trim() !== "" || r.prefix.trim() !== "");
-        } else {
-          // child rows should have serial to be included
-          return r.serial.trim() !== "" || r.prefix.trim() !== "";
-        }
-      })
-      .map(r => {
-        const raw = r.rawItem ?? {};
-        return {
-          grnItemId: raw?.id ?? null,
-          itemId: raw?.itemId ?? raw?.item ?? raw?.id ?? r.itemId,
-          barcodeNumber: `${r.prefix ?? ""}${r.serial ?? ""}`.trim(),
-          mainQuantity: r.isMain ? Number(r.quantity || 0) : Number(r.quantity || 1),
-          comment: r.info1 || null,
-          info: r.info2 || null,
-          manufacturingDate: r.mfgDate || null,
-          expiryDate: r.expiryDate || null,
-          linkedId: null,
-        };
-      });
-
-    if (prepared.length === 0) {
-      alert("No barcode rows ready to generate. Please set prefix+serial or split items.");
-      return;
-    }
-
-    const payload = {
-      grnId: Number(grnId),
-      barcodes: prepared,
-    };
+    const [endpoint, payload] =
+      sourceType === "GRN"
+        ? ["/inventory/grn/barcodes/bulk", buildGRNPayload(prepared)]
+        : ["/inventory/grn/barcodes/bulk",  buildFGPayload(prepared)];
 
     setIsGenerating(true);
     try {
-      console.log("Posting barcode payload:", payload);
-      await post("/inventory/grn/barcodes/bulk", payload);
-      alert("Barcodes created successfully");
+      console.log(`[BarcodeDialog] POST ${endpoint}`, payload);
+      await post(endpoint, payload);
+      toast.success("Barcodes generated successfully!");
       onOpenChange(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Barcode generation error:", err);
-      alert("Failed to generate barcodes. Check console for details.");
+      toast.error(
+        err?.response?.data?.message || err?.message || "Failed to generate barcodes"
+      );
     } finally {
       setIsGenerating(false);
     }
   };
 
-  // const mainRow = rows.find(r => r.isMain);
-  // const childRows = mainRow ? rows.filter(r => r.parentId === mainRow.id) : [];
-  const displayRows = rows; // keep order as is (mains then splits)
+  // ── CSV download ──────────────────────────────────────────────────────────
+  const downloadTemplate = () => {
+    const headers = ["prefix","serial","quantity","manufacturingDate","expiryDate","comment","info"];
+    const csv = [
+      headers.join(","),
+      ...rows.map(r =>
+        `${r.prefix},${r.serial},${r.quantity},${r.mfgDate},${r.expiryDate},${r.comment},${r.info}`
+      ),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement("a"), {
+      href: url,
+      download: `barcode_template_${sourceType.toLowerCase()}_${referenceLabel || "sample"}.csv`,
+    });
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
 
+  // ── Title ─────────────────────────────────────────────────────────────────
+  const title =
+    sourceType === "GRN"
+      ? `Barcode Number - GRN: ${grnId ?? "—"}`
+      : `Barcode Number - FG: ${(referenceLabel || productionId )?? "—"}`;
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -247,22 +308,24 @@ export default function BarcodeDialog({ open, onOpenChange, grnId = null, items 
                 className="w-8 h-8 cursor-pointer hover:text-gray-600"
                 onClick={() => onOpenChange(false)}
               />
-              Barcode Number - GRN: {grnId ?? "—"}
+              {title}
+              {/* Source type badge */}
+              <span className={`text-sm font-semibold px-2.5 py-0.5 rounded-full ${
+                sourceType === "FG"
+                  ? "bg-green-100 text-green-700"
+                  : "bg-blue-100 text-blue-700"
+              }`}>
+                {sourceType}
+              </span>
             </DialogTitle>
           </DialogHeader>
 
           <div className="mt-8 space-y-6">
             {/* Top controls */}
             <div className="flex flex-wrap items-center gap-3">
-              <Button variant="outline" onClick={() => setShowPrefixDialog(true)}>
-                Customize
-              </Button>
-              <Button variant="destructive" onClick={clearAllBarcode}>
-                Clear All
-              </Button>
-              <Button variant="outline" onClick={autoFillSerials}>
-                Auto-fill Serials
-              </Button>
+              <Button variant="outline" onClick={() => setPrefixDialogOpen(true)}>Customize</Button>
+              <Button variant="destructive" onClick={clearAll}>Clear All</Button>
+              <Button variant="outline" onClick={autoFillSerials}>Auto-fill Serials</Button>
             </div>
 
             {/* Table */}
@@ -270,49 +333,54 @@ export default function BarcodeDialog({ open, onOpenChange, grnId = null, items 
               <table className="w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-4 text-left font-semibold">#</th>
-                    <th className="px-6 py-4 text-left font-semibold">Item Id</th>
-                    <th className="px-6 py-4 text-left font-semibold">Item Name</th>
-                    <th className="px-6 py-4 text-left font-semibold">Qty</th>
-                    <th className="px-6 py-4 text-left font-semibold">Barcode Number</th>
-                    <th className="px-6 py-4 text-left font-semibold">Mfg Date</th>
-                    <th className="px-6 py-4 text-left font-semibold">Expiry Date</th>
-                    <th className="px-6 py-4 text-left font-semibold">Comment</th>
-                    <th className="px-6 py-4 text-left font-semibold">Info</th>
-                    <th className="px-6 py-4 text-left font-semibold">Split / Merge</th>
+                    {["#","Item Id","Item Name","Qty","Barcode Number",
+                      "Mfg Date","Expiry Date","Comment","Info","Split / Merge"
+                    ].map(h => (
+                      <th key={h} className="px-6 py-4 text-left font-semibold whitespace-nowrap">{h}</th>
+                    ))}
                   </tr>
                 </thead>
 
                 <tbody>
-                  {displayRows.map((row, idx) => {
-                    const isMain = !!row.isMain;
-                    const isChild = !!row.parentId;
+                  {rows.map((row, idx) => {
+                    const isMain  = !!row.isMain;
+                    const isChild = !!row.parentRowId;
+                    const parent  = isChild ? rows.find(r => r.rowId === row.parentRowId) : null;
+
                     return (
-                      <tr key={row.id} className={`border-t ${isChild ? "bg-gray-50" : ""}`}>
-                        <td className="px-6 py-4">{idx + 1}</td>
+                      <tr key={row.rowId} className={`border-t ${isChild ? "bg-gray-50" : ""}`}>
+                        <td className="px-6 py-4 text-gray-500">{idx + 1}</td>
+
+                        {/* Item ID */}
                         <td className="px-6 py-4 font-medium">
-                          {isChild ? (row.rawItem ? row.rawItem.itemCode ?? row.rawItem.itemId ?? "" : "") : row.itemId}
+                          {isChild ? (parent?.displayCode ?? "") : row.displayCode}
                         </td>
+
+                        {/* Item Name */}
                         <td className="px-6 py-4">
-                          {isChild ? (row.rawItem ? row.rawItem.description ?? row.rawItem.name ?? "" : "") : row.itemName}
+                          {isChild ? (parent?.displayName ?? "") : row.displayName}
                         </td>
+
+                        {/* Qty + split/merge icon */}
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
-                            <span className={isMain ? "font-bold text-blue-600" : "text-green-600"}>{row.quantity}</span>
+                            <span className={isMain ? "font-bold text-blue-600" : "text-green-600"}>
+                              {row.quantity}
+                            </span>
                             {isMain && row.quantity > 0 && (
                               <button
-                                onClick={() => splitIntoIndividual(row.id)}
-                                title="Split into individual barcode rows (creates up to 9)"
-                                className="p-1 bg-blue-50 rounded"
+                                onClick={() => splitRow(row.rowId)}
+                                title="Split into individual barcode rows"
+                                className="p-1 bg-blue-50 rounded hover:bg-blue-100"
                               >
                                 <Plus className="w-4 h-4 text-blue-600" />
                               </button>
                             )}
                             {isChild && (
                               <button
-                                onClick={() => mergeBack(row.id)}
-                                title="Merge back into parent (remove this split)"
-                                className="p-1 bg-red-50 rounded"
+                                onClick={() => mergeBack(row.rowId)}
+                                title="Merge back into parent"
+                                className="p-1 bg-red-50 rounded hover:bg-red-100"
                               >
                                 <Minus className="w-4 h-4 text-red-600" />
                               </button>
@@ -320,71 +388,53 @@ export default function BarcodeDialog({ open, onOpenChange, grnId = null, items 
                           </div>
                         </td>
 
+                        {/* Barcode = Prefix + Serial */}
                         <td className="px-6 py-4">
-                          <div className="flex gap-2 items-center">
+                          <div className="flex gap-2">
                             <Input
                               placeholder="Prefix"
                               value={row.prefix}
-                              onChange={(e) => updateField(row.id, "prefix", e.target.value)}
+                              onChange={e => update(row.rowId, "prefix", e.target.value)}
                               className="w-28"
                             />
                             <Input
                               placeholder="0001"
                               value={row.serial}
-                              onChange={(e) => updateField(row.id, "serial", e.target.value)}
+                              onChange={e => update(row.rowId, "serial", e.target.value)}
                               className="w-28"
                             />
                           </div>
                         </td>
 
                         <td className="px-6 py-4">
-                          <Input
-                            type="date"
-                            value={row.mfgDate}
-                            onChange={(e) => updateField(row.id, "mfgDate", e.target.value)}
-                          />
+                          <Input type="date" value={row.mfgDate}
+                            onChange={e => update(row.rowId, "mfgDate", e.target.value)} />
                         </td>
 
                         <td className="px-6 py-4">
-                          <Input
-                            type="date"
-                            value={row.expiryDate}
-                            onChange={(e) => updateField(row.id, "expiryDate", e.target.value)}
-                          />
+                          <Input type="date" value={row.expiryDate}
+                            onChange={e => update(row.rowId, "expiryDate", e.target.value)} />
                         </td>
 
                         <td className="px-6 py-4">
-                          <Input
-                            placeholder="Comment"
-                            value={row.info1}
-                            onChange={(e) => updateField(row.id, "info1", e.target.value)}
-                          />
+                          <Input placeholder="Comment" value={row.comment}
+                            onChange={e => update(row.rowId, "comment", e.target.value)} />
                         </td>
 
                         <td className="px-6 py-4">
-                          <Input
-                            placeholder="Info"
-                            value={row.info2}
-                            onChange={(e) => updateField(row.id, "info2", e.target.value)}
-                          />
+                          <Input placeholder="Info" value={row.info}
+                            onChange={e => update(row.rowId, "info", e.target.value)} />
                         </td>
 
                         <td className="px-6 py-4">
-                          <div className="flex gap-2">
-                            {isMain && (
-                              <Button size="sm" onClick={() => {
-                                // quick-create 1-child row (same as split but create single)
-                                splitIntoIndividual(row.id, 1);
-                              }}>
-                                Split 1
-                              </Button>
-                            )}
-                            {isChild && (
-                              <Button size="sm" variant="outline" onClick={() => mergeBack(row.id)}>
-                                Merge
-                              </Button>
-                            )}
-                          </div>
+                          {isMain && (
+                            <Button size="sm" onClick={() => splitRow(row.rowId, 1)}>Split 1</Button>
+                          )}
+                          {isChild && (
+                            <Button size="sm" variant="outline" onClick={() => mergeBack(row.rowId)}>
+                              Merge
+                            </Button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -393,57 +443,43 @@ export default function BarcodeDialog({ open, onOpenChange, grnId = null, items 
               </table>
             </div>
 
-            {/* Bottom buttons */}
+            {/* Footer buttons */}
             <div className="flex justify-between items-center pt-6 border-t">
               <div className="flex gap-3">
-                <Button variant="outline" onClick={() => {
-                  // download template minimal CSV for user
-                  const headers = ["prefix","serial","quantity","manufacturingDate","expiryDate","comment","info"];
-                  const csvRows = [
-                    headers.join(","),
-                    rows.map(r => `${r.prefix},${r.serial},${r.quantity},${r.mfgDate},${r.expiryDate},${r.info1},${r.info2}`).join("\n")
-                  ].join("\n");
-                  const blob = new Blob([csvRows], { type: "text/csv" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `barcode_template_grn_${grnId ?? "sample"}.csv`;
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  URL.revokeObjectURL(url);
-                }}>
-                  Download Template
-                </Button>
-                <Button variant="outline" onClick={() => {
-                  // upload not implemented here — keep button for UI parity
-                  alert("Upload feature isn't wired in this modal. Use CSV upload flow if implemented.");
-                }}>
+                <Button variant="outline" onClick={downloadTemplate}>Download Template</Button>
+                <Button variant="outline"
+                  onClick={() => toast.info("Upload feature — use the CSV upload flow if implemented.")}
+                >
                   Upload File
                 </Button>
               </div>
-
               <div className="flex gap-3">
-                <Button className="bg-green-600 hover:bg-green-700 text-white px-8" onClick={handleGenerate} disabled={isGenerating}>
+                <Button
+                  className="bg-green-600 hover:bg-green-700 text-white px-8"
+                  onClick={handleGenerate}
+                  disabled={isGenerating}
+                >
                   {isGenerating ? "Generating..." : "Generate Barcodes"}
                 </Button>
-                <Button onClick={() => onOpenChange(false)} variant="outline">Cancel</Button>
+                <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
               </div>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Prefix customization dialog */}
-      <Dialog open={showPrefixDialog} onOpenChange={setShowPrefixDialog}>
+      {/* Prefix customization sub-dialog */}
+      <Dialog open={prefixDialogOpen} onOpenChange={setPrefixDialogOpen}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Set Global Prefix</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Set Global Prefix</DialogTitle></DialogHeader>
           <div className="space-y-4 py-4">
-            <Input placeholder="Enter prefix for all barcodes" value={globalPrefix} onChange={(e) => setGlobalPrefix(e.target.value)} />
+            <Input
+              placeholder="Enter prefix for all barcodes"
+              value={globalPrefix}
+              onChange={e => setGlobalPrefix(e.target.value)}
+            />
             <div className="flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setShowPrefixDialog(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setPrefixDialogOpen(false)}>Cancel</Button>
               <Button onClick={applyGlobalPrefix}>Apply to All</Button>
             </div>
           </div>

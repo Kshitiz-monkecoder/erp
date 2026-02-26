@@ -49,6 +49,8 @@ interface FinishedGood {
   forRepair?: number;
   repaired?: number;
   bomFinishedGoodsId: number;
+  /** Hydrated inventory item — used to read the real item ID for barcodes */
+  itemData?: { id: string; [key: string]: any };
 }
 
 interface RawMaterial {
@@ -116,7 +118,10 @@ interface ProcessLevelData {
 // ─────────────────────────────────────────────
 export interface FGActionRow {
   bomFinishedGoodsId: number;
+  /** Production FG record ID — used as fgId in the barcode API */
   itemId: string;
+  /** Actual inventory item ID — used as itemId in the barcode API */
+  inventoryItemId: string;
   itemName: string;
   itemCategory: string;
   unit: string;
@@ -316,6 +321,7 @@ const TakeActionsDialog: React.FC<TakeActionsDialogProps> = ({
         lvl.finishedGoods.map((f) => ({
           bomFinishedGoodsId: f.bomFinishedGoodsId,
           itemId: String(f.id),
+          inventoryItemId: f.itemData?.id ?? "",
           itemName: f.itemName || "—",
           itemCategory: "—",
           unit: f.unit || "Kg",
