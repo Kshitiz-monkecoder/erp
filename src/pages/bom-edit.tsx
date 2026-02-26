@@ -669,7 +669,7 @@ const BOMLevel: React.FC<{
   onUnlinkChildBOM: (idx: number) => void;
 }> = ({
   levelIndex, data, items, onUpdate, onDelete,
-  childBOMDialogOpen, childBOMTargetIdx, childBOMExpandedSet,
+  childBOMExpandedSet,
   onOpenChildBOM, onToggleChildBOMExpanded, onUnlinkChildBOM,
 }) => {
   const toggle = (s: keyof BOMLevelData["expanded"]) =>

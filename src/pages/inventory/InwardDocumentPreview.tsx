@@ -1,7 +1,7 @@
 // src/pages/inventory/InwardDocumentPreview.tsx
 import React, { useEffect, useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Printer,  Barcode, ArrowLeft } from "lucide-react";
+import { Printer, Barcode, ArrowLeft } from "lucide-react";
 import BarcodeDialog from "@/components/app/modals/BarcodeDialogue";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { get } from "@/lib/apiService";
@@ -121,7 +121,7 @@ const InwardDocumentPreview: React.FC = () => {
 
     const printContent = printRef.current.innerHTML;
     const printWindow = window.open('', '_blank');
-    
+
     if (!printWindow) {
       alert('Please allow pop-ups to print the document');
       return;
@@ -363,14 +363,14 @@ const InwardDocumentPreview: React.FC = () => {
     items:
       (inwardData?.items && Array.isArray(inwardData.items) && inwardData.items.length > 0)
         ? inwardData.items.map((item: any, index: number) => ({
-            description: inwardData?.purchaseOrder?.title || item?.description || `Item ${index + 1}`,
-            itemCode: item?.id ? `ITM-${item.id}` : `ITM-${index + 1}`,
-            totalQuantity: item.accepted ?? item.quantity ?? "0",
-            deliveredEarlier: item.deliveredEarlier ?? "0",
-            deliveredToday: item.accepted ?? item.deliveredToday ?? "0",
-            balance: item.balance ?? "0",
-            rawItem: item, // keep original item object for barcode
-          }))
+          description: inwardData?.purchaseOrder?.title || item?.description || `Item ${index + 1}`,
+          itemCode: item?.id ? `ITM-${item.id}` : `ITM-${index + 1}`,
+          totalQuantity: item.accepted ?? item.quantity ?? "0",
+          deliveredEarlier: item.deliveredEarlier ?? "0",
+          deliveredToday: item.accepted ?? item.deliveredToday ?? "0",
+          balance: item.balance ?? "0",
+          rawItem: item, // keep original item object for barcode
+        }))
         : [],
   };
 
@@ -390,10 +390,10 @@ const InwardDocumentPreview: React.FC = () => {
         {/* Header */}
         <div className="border-b px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-4">
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="no-print" 
+            <Button
+              variant="ghost"
+              size="sm"
+              className="no-print"
               onClick={() => navigate(-1)}
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
@@ -416,17 +416,17 @@ const InwardDocumentPreview: React.FC = () => {
           </div>
 
           <div className="flex gap-3 no-print">
-            <Button 
-              variant="outline" 
-              size="sm" 
+            <Button
+              variant="outline"
+              size="sm"
               onClick={handlePrint}
               className="flex items-center gap-2"
             >
               <Printer className="w-4 h-4" />
               Print
             </Button>
-            <Button 
-              onClick={() => setShowBarcodeDialog(true)} 
+            <Button
+              onClick={() => setShowBarcodeDialog(true)}
               className="bg-[#105076] hover:bg-[#105076]/90 flex items-center gap-2"
             >
               <Barcode className="w-4 h-4" />
@@ -545,6 +545,7 @@ const InwardDocumentPreview: React.FC = () => {
       <BarcodeDialog
         open={showBarcodeDialog}
         onOpenChange={setShowBarcodeDialog}
+        sourceType="GRN"
         grnId={inwardData?.id}
         items={(inwardData?.items ?? [])}
       />
