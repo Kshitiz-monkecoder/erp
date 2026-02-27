@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   ColumnDef,
   ColumnFiltersState,
-  flexRender,
+  // flexRender,
   getCoreRowModel,
   getFilteredRowModel,
   getSortedRowModel,
@@ -29,7 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "../../ui/button";
-import MultiSelectWithSearch from "../MultiSelectWithSearch";
+// import MultiSelectWithSearch from "../MultiSelectWithSearch";
 import { IModalProps } from "@/lib/types";
 import TableLoading from "../TableLoading";
 import { get, post, put } from "../../../lib/apiService";
@@ -347,7 +347,7 @@ interface ZoneRowProps {
   onRefresh: () => void;
 }
 
-const ZoneRow: React.FC<ZoneRowProps> = ({ zone, warehouseId, onZoneEdit, onRefresh }) => {
+const ZoneRow: React.FC<ZoneRowProps> = ({ zone,  onZoneEdit, onRefresh }) => {
   const [expanded, setExpanded] = useState(false);
   const [addRackOpen, setAddRackOpen] = useState(false);
   const [editRack, setEditRack] = useState<RackItem | null>(null);
