@@ -365,6 +365,7 @@ const ItemMaster: React.FC = () => {
       <UpdateProductStockModal
         isOpen={showUpdateStockModal}
         onClose={() => setShowUpdateStockModal(false)}
+        onSuccess={() => fetchInventoryItems()}
         items={itemData.map((i) => ({
           id: i.id as number,
           name: i.name,
