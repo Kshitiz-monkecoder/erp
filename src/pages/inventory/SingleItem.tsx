@@ -3,107 +3,230 @@ import AddUnitOfMeasurementModal from "@/components/app/modals/AddUnitOfMeasurem
 import AddWarehouseModal from "@/components/app/modals/AddWarehouseModal";
 import EditInventoryItemModal from "@/components/app/modals/EditInventoryItemModal";
 import UniversalTable from "@/components/app/tables";
-import { get } from "@/lib/apiService";
-import { Pencil } from "lucide-react";
-import React, { useEffect, useState, useMemo } from "react";
+import { Pencil, Loader2 } from "lucide-react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { ColumnDef } from "@tanstack/react-table";
 import moment from "moment";
-
-type StockMovementData = {
-  id: number;
-  transactionType: "IN" | "OUT";
-  quantity: string;
-  purchasePrice: string;
-  sellingPrice: string;
-  remarks: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
+import {
+  itemAPI,
+  ItemDetails,
+  ItemHistoryRecord,
+  ItemHistoryFilters,
+} from "@/services/itemService";
+import { get } from "@/lib/apiService";
 
 type Tab = "Item Details" | "Item History";
 
+// ─── History Filters State ────────────────────────────────────────────────────
+
+interface HistoryFiltersState {
+  storeIds: number[];
+  conversion: number;
+  page: number;
+  itemsPerPage: number;
+}
+
+// ─── Store type (for dropdown) ────────────────────────────────────────────────
+
+interface StoreOption {
+  id: number;
+  name: string;
+}
+
 const SingleItem: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+
   const [activeTab, setActiveTab] = useState<Tab>("Item Details");
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
-  const [itemdetails, setItemDetails] = useState<any>(null);
-  const [stockMovementData, setStockMovementData] = useState<StockMovementData[]>([]);
-  const [loadingStockData] = useState<boolean>(false);
+  const [itemdetails, setItemDetails] = useState<ItemDetails | null>(null);
   const [showAddUnitOfMeasurementModal, setShowAddUnitOfMeasurementModal] = useState<boolean>(false);
   const [showAddWarehouseModal, setShowAddWarehouseModal] = useState<boolean>(false);
   const [showAddCategoriesModal, setShowAddCategoriesModal] = useState<boolean>(false);
 
-  useEffect(() => {
-    getSingleItemDetails();
-  }, []);
+  // ── History state
+  const [historyData, setHistoryData] = useState<ItemHistoryRecord[]>([]);
+  const [historyTotal, setHistoryTotal] = useState<number>(0);
+  const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
+  const [stores, setStores] = useState<StoreOption[]>([]);
+  const [historyFilters, setHistoryFilters] = useState<HistoryFiltersState>({
+    storeIds: [],
+    conversion: 1,
+    page: 1,
+    itemsPerPage: 20,
+  });
 
-  const getSingleItemDetails = async () => {
+  // ─── Fetch item details ───────────────────────────────────────────────────
+
+  const getSingleItemDetails = useCallback(async () => {
+    if (!id) return;
     try {
-      const response = await get(`/inventory/item/${id}`);
-      if (!response) throw new Error(`Error: ${response} ${response}`);
+      const response = await itemAPI.getItem(id);
+      if (!response) throw new Error("No response");
       setItemDetails(response.data);
-      setStockMovementData(response.data.stockData || []);
     } catch (error) {
       console.error("Error fetching item details:", error);
     }
-  };
+  }, [id]);
 
-  const stockMovementColumns: ColumnDef<StockMovementData>[] = useMemo(
+  useEffect(() => {
+    getSingleItemDetails();
+  }, [getSingleItemDetails]);
+
+  // ─── Fetch stores (warehouses) for dropdown ───────────────────────────────
+
+  useEffect(() => {
+    const fetchStores = async () => {
+      try {
+        const result = await get("/inventory/warehouse");
+        setStores(result.data ?? []);
+      } catch (e) {
+        console.error("Failed to fetch stores:", e);
+      }
+    };
+    fetchStores();
+  }, []);
+
+  // ─── Fetch item history ───────────────────────────────────────────────────
+
+  const fetchHistory = useCallback(async () => {
+    if (!id || !itemdetails) return;
+    setLoadingHistory(true);
+    try {
+      const payload = {
+        filters: {
+          product_id: Number(id),
+          ...(historyFilters.storeIds.length > 0 && { store: historyFilters.storeIds }),
+          conversion: historyFilters.conversion,
+        } as ItemHistoryFilters,
+        search: {},
+        pagination: {
+          page: historyFilters.page,
+          items_per_page: historyFilters.itemsPerPage,
+          sort_by: ["creation_date"],
+          sort_desc: [true],
+        },
+      };
+      const response = await itemAPI.getItemHistory(payload);
+      if (response.status === 1) {
+        setHistoryData(response.data.data ?? []);
+        setHistoryTotal(response.data.total_length ?? 0);
+      }
+    } catch (error) {
+      console.error("Error fetching item history:", error);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [id, itemdetails, historyFilters]);
+
+  // Fetch history when tab becomes active or filters change
+  useEffect(() => {
+    if (activeTab === "Item History") {
+      fetchHistory();
+    }
+  }, [activeTab, fetchHistory]);
+
+  // ─── History columns ──────────────────────────────────────────────────────
+
+  const stockMovementColumns: ColumnDef<ItemHistoryRecord>[] = useMemo(
     () => [
       {
         header: "Date",
-        accessorKey: "date",
+        accessorKey: "creation_date",
         cell: ({ row }) => (
           <div className="font-normal text-xs">
-            {moment(row.original.createdAt).format("DD/MM/YYYY HH:mm")}
+            {moment(row.original.creation_date).format("DD/MM/YYYY HH:mm")}
           </div>
         ),
       },
       {
-        header: "Changed Via",
-        accessorKey: "transactionType",
+        header: "Item ID",
+        accessorKey: "itemid",
+        cell: ({ row }) => (
+          <div className="font-normal text-xs font-mono text-gray-500">{row.original.itemid}</div>
+        ),
+      },
+      {
+        header: "Source",
+        accessorKey: "source_object_type",
         cell: ({ row }) => (
           <div className="font-normal text-xs">
-            {row.original.transactionType === "IN" ? "Manual Adjustment" : "Process"}
+            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+              row.original.source_object_type === "Manual Adjustment"
+                ? "bg-blue-50 text-blue-600"
+                : "bg-gray-100 text-gray-600"
+            }`}>
+              {row.original.source_object_type || "—"}
+            </span>
           </div>
         ),
       },
       {
-        header: "Previous Quantity",
-        accessorKey: "previousQuantity",
-        cell: () => <div className="font-normal text-xs text-right">-</div>,
-      },
-      {
-        header: "Change Quantity",
-        accessorKey: "changeQuantity",
+        header: "Document",
+        accessorKey: "source_object_name",
         cell: ({ row }) => (
-          <div className="font-normal text-xs text-right">
-            {row.original.transactionType === "IN" ? "+" : "-"}
-            {row.original.quantity}
+          <div className="font-normal text-xs text-gray-600 max-w-28 truncate">
+            {row.original.source_object_name || "—"}
           </div>
         ),
       },
       {
-        header: "New Quantity",
-        accessorKey: "newQuantity",
-        cell: () => <div className="font-normal text-xs text-right">-</div>,
+        header: "Store",
+        accessorKey: "store",
+        cell: ({ row }) => (
+          <div className="font-normal text-xs text-gray-600">{row.original.store || "—"}</div>
+        ),
       },
       {
-        header: "Transaction Price",
-        accessorKey: "price",
+        header: "Prev Qty",
+        accessorKey: "old_amount",
         cell: ({ row }) => (
-          <div className="font-normal text-xs text-right">
-            ₹{Number(row.original.purchasePrice).toFixed(2)}
+          <div className="font-normal text-xs text-right tabular-nums">{row.original.old_amount ?? "—"}</div>
+        ),
+      },
+      {
+        header: "Change",
+        accessorKey: "change_amount",
+        cell: ({ row }) => {
+          const isIn = row.original.change_type === "1";
+          return (
+            <div className={`font-semibold text-xs text-right tabular-nums ${isIn ? "text-green-600" : "text-red-500"}`}>
+              {row.original.change_amount}
+            </div>
+          );
+        },
+      },
+      {
+        header: "New Qty",
+        accessorKey: "new_amount",
+        cell: ({ row }) => (
+          <div className="font-medium text-xs text-right tabular-nums">{row.original.new_amount ?? "—"}</div>
+        ),
+      },
+      {
+        header: "Txn Price",
+        accessorKey: "transaction_price",
+        cell: ({ row }) => (
+          <div className="font-normal text-xs text-right tabular-nums">
+            {Number(row.original.transaction_price) > 0
+              ? `₹${Number(row.original.transaction_price).toFixed(2)}`
+              : "—"}
           </div>
+        ),
+      },
+      {
+        header: "Created By",
+        accessorKey: "created_by",
+        cell: ({ row }) => (
+          <div className="font-normal text-xs text-gray-500">{row.original.created_by || "—"}</div>
         ),
       },
       {
         header: "Comment",
         accessorKey: "comment",
         cell: ({ row }) => (
-          <div className="font-normal text-xs max-w-32 truncate">
-            {row.original.remarks || "-"}
+          <div className="font-normal text-xs max-w-36 truncate text-gray-500" title={row.original.comment}>
+            {row.original.comment || "—"}
           </div>
         ),
       },
@@ -113,6 +236,8 @@ const SingleItem: React.FC = () => {
 
   const tabs: Tab[] = ["Item Details", "Item History"];
 
+  const totalPages = Math.ceil(historyTotal / historyFilters.itemsPerPage);
+
   return (
     <>
       {itemdetails ? (
@@ -120,9 +245,7 @@ const SingleItem: React.FC = () => {
           {/* Header */}
           <div className="bg-gray-100 flex items-center justify-between gap-2 h-18 px-8 py-4">
             <div className="flex text-xs sm:text-sm items-center gap-2">
-              <div className="rounded-full cursor-pointer shadow-none">
-                {itemdetails?.name}
-              </div>
+              <div className="rounded-full cursor-pointer shadow-none">{itemdetails?.name}</div>
               <div className="text-xs text-green-500 border border-green-200 bg-green-50 px-2 rounded-full">
                 {itemdetails?.isProduct ? "Product" : "Service"}
               </div>
@@ -134,9 +257,7 @@ const SingleItem: React.FC = () => {
                   {itemdetails?.currentStock || 0} {itemdetails?.unit?.name}
                 </div>
                 |
-                <div>
-                  ₹{(itemdetails?.defaultPrice || 0) * (itemdetails?.currentStock || 0)}
-                </div>
+                <div>₹{(itemdetails?.defaultPrice || 0) * (itemdetails?.currentStock || 0)}</div>
               </div>
             </div>
           </div>
@@ -168,7 +289,7 @@ const SingleItem: React.FC = () => {
             ))}
           </div>
 
-          {/* Tab Content */}
+          {/* ── Item Details Tab ───────────────────────────────────────────── */}
           {activeTab === "Item Details" && (
             <div className="grid md:grid-cols-5 gap-5 px-8 pb-10">
               <div className="p-4 md:col-span-5">
@@ -185,67 +306,25 @@ const SingleItem: React.FC = () => {
                 <div className="mt-4 font-medium text-xs md:text-sm space-y-4">
                   <h4>Basic item Details</h4>
                   <div className="px-4 grid grid-cols-2 md:grid-cols-3 gap-5">
-                    <div>
-                      <div>Item Id:</div>
-                      <div className="font-light">{itemdetails?.id}</div>
-                    </div>
-                    <div>
-                      <div>Item Name:</div>
-                      <div className="font-light">{itemdetails?.name}</div>
-                    </div>
-                    <div>
-                      <div>Type:</div>
-                      <div className="font-light">{itemdetails?.type}</div>
-                    </div>
-                    <div>
-                      <div>Item Category:</div>
-                      <div className="font-light">{itemdetails?.category?.name}</div>
-                    </div>
-                    <div>
-                      <div>Base Unit:</div>
-                      <div className="font-light">{itemdetails?.unit?.name}</div>
-                    </div>
-                    <div>
-                      <div>Tax:</div>
-                      <div className="font-light">{itemdetails?.tax?.name}</div>
-                    </div>
-                    <div>
-                      <div>Hsn Code:</div>
-                      <div className="font-light">{itemdetails?.hsnCode}</div>
-                    </div>
+                    <div><div>Item Id:</div><div className="font-light">{itemdetails?.id}</div></div>
+                    <div><div>Item Name:</div><div className="font-light">{itemdetails?.name}</div></div>
+                    <div><div>Type:</div><div className="font-light">{itemdetails?.type}</div></div>
+                    <div><div>Item Category:</div><div className="font-light">{itemdetails?.category?.name}</div></div>
+                    <div><div>Base Unit:</div><div className="font-light">{itemdetails?.unit?.name}</div></div>
+                    <div><div>Tax:</div><div className="font-light">{itemdetails?.tax?.name}</div></div>
+                    <div><div>Hsn Code:</div><div className="font-light">{itemdetails?.hsnCode}</div></div>
                   </div>
                 </div>
                 <div className="mt-6 font-medium text-xs md:text-sm space-y-4">
                   <h4>Item Prices</h4>
                   <div className="px-4 grid grid-cols-2 md:grid-cols-3 gap-5">
-                    <div>
-                      <div>Default Price:</div>
-                      <div className="font-light">₹{itemdetails?.defaultPrice}</div>
-                    </div>
-                    <div>
-                      <div>Regular Buying Price:</div>
-                      <div className="font-light">₹{itemdetails?.regularBuyingPrice}</div>
-                    </div>
-                    <div>
-                      <div>Wholesale Buying Price:</div>
-                      <div className="font-light">₹{itemdetails?.wholesaleBuyingPrice}</div>
-                    </div>
-                    <div>
-                      <div>Regular Selling Price:</div>
-                      <div className="font-light">₹{itemdetails?.regularSellingPrice}</div>
-                    </div>
-                    <div>
-                      <div>MRP:</div>
-                      <div className="font-light">₹{itemdetails?.mrp}</div>
-                    </div>
-                    <div>
-                      <div>Dealer Price:</div>
-                      <div className="font-light">₹{itemdetails?.dealerPrice}</div>
-                    </div>
-                    <div>
-                      <div>Distributor Price:</div>
-                      <div className="font-light">₹{itemdetails?.distributorPrice}</div>
-                    </div>
+                    <div><div>Default Price:</div><div className="font-light">₹{itemdetails?.defaultPrice}</div></div>
+                    <div><div>Regular Buying Price:</div><div className="font-light">₹{itemdetails?.regularBuyingPrice}</div></div>
+                    <div><div>Wholesale Buying Price:</div><div className="font-light">₹{itemdetails?.wholesaleBuyingPrice}</div></div>
+                    <div><div>Regular Selling Price:</div><div className="font-light">₹{itemdetails?.regularSellingPrice}</div></div>
+                    <div><div>MRP:</div><div className="font-light">₹{itemdetails?.mrp}</div></div>
+                    <div><div>Dealer Price:</div><div className="font-light">₹{itemdetails?.dealerPrice}</div></div>
+                    <div><div>Distributor Price:</div><div className="font-light">₹{itemdetails?.distributorPrice}</div></div>
                   </div>
                 </div>
                 <div className="bg-neutral-100 mt-6 px-3 py-1 text-[#8A8AA3] w-full flex justify-between items-center">
@@ -266,9 +345,7 @@ const SingleItem: React.FC = () => {
                     <div className="border-r" />
                     <div className="flex items-center gap-2">
                       <div>Price Per Unit:</div>
-                      <div className="font-medium text-xs md:text-sm">
-                        ₹{itemdetails?.defaultPrice || 0}
-                      </div>
+                      <div className="font-medium text-xs md:text-sm">₹{itemdetails?.defaultPrice || 0}</div>
                     </div>
                   </div>
                 </div>
@@ -278,54 +355,132 @@ const SingleItem: React.FC = () => {
                 <div className="px-4 text-xs md:text-sm mt-6 grid grid-cols-2 md:grid-cols-3 gap-5">
                   <div>
                     <div className="font-medium text-xs md:text-sm">Minimum Stock Level:</div>
-                    <div className="font-light">
-                      {itemdetails?.minimumStockLevel || 0} {itemdetails?.unit?.name}
-                    </div>
+                    <div className="font-light">{itemdetails?.minimumStockLevel || 0} {itemdetails?.unit?.name}</div>
                   </div>
                   <div>
                     <div>Maximum Stock Level:</div>
-                    <div className="font-light">
-                      {itemdetails?.maximumStockLevel || 0} {itemdetails?.unit?.name}
-                    </div>
+                    <div className="font-light">{itemdetails?.maximumStockLevel || 0} {itemdetails?.unit?.name}</div>
                   </div>
                   <div>
                     <div>Total Stock:</div>
-                    <div className="font-light">
-                      {itemdetails?.currentStock || 0} {itemdetails?.unit?.name}
-                    </div>
+                    <div className="font-light">{itemdetails?.currentStock || 0} {itemdetails?.unit?.name}</div>
                   </div>
                 </div>
               </div>
             </div>
           )}
 
+          {/* ── Item History Tab ───────────────────────────────────────────── */}
           {activeTab === "Item History" && (
             <div className="px-8 pb-10">
               <div className="p-4">
-                {/* Filters row (placeholder for future Store/UoM filters like in the reference image) */}
-                <div className="flex items-center gap-4 mb-4 mt-2">
+
+                {/* Filter bar */}
+                <div className="flex flex-wrap items-center gap-3 mb-4 mt-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  {/* Store filter */}
                   <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-500">Select Store</label>
-                    <select className="border border-neutral-200 rounded-md px-3 py-1.5 text-xs text-gray-700 bg-white">
-                      <option value="">Select</option>
+                    <label className="text-xs font-medium text-gray-500 whitespace-nowrap">Store</label>
+                    <select
+                      className="border border-neutral-200 rounded-md px-3 py-1.5 text-xs text-gray-700 bg-white min-w-36"
+                      value={historyFilters.storeIds[0] ?? ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setHistoryFilters((prev) => ({
+                          ...prev,
+                          page: 1,
+                          storeIds: val ? [Number(val)] : [],
+                        }));
+                      }}
+                    >
+                      <option value="">All Stores</option>
+                      {stores.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
                     </select>
                   </div>
+
+                  {/* UoM / Conversion filter */}
                   <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-500">UoM</label>
-                    <select className="border border-neutral-200 rounded-md px-3 py-1.5 text-xs text-gray-700 bg-white">
-                      <option value={itemdetails?.unit?.name}>{itemdetails?.unit?.name}</option>
+                    <label className="text-xs font-medium text-gray-500 whitespace-nowrap">UoM</label>
+                    <select
+                      className="border border-neutral-200 rounded-md px-3 py-1.5 text-xs text-gray-700 bg-white"
+                      value={historyFilters.conversion}
+                      onChange={(e) =>
+                        setHistoryFilters((prev) => ({
+                          ...prev,
+                          page: 1,
+                          conversion: Number(e.target.value),
+                        }))
+                      }
+                    >
+                      <option value={1}>{itemdetails?.unit?.name || "Base Unit"}</option>
                     </select>
                   </div>
+
+                  {/* Items per page */}
+                  <div className="flex items-center gap-2 ml-auto">
+                    <label className="text-xs font-medium text-gray-500 whitespace-nowrap">Per page</label>
+                    <select
+                      className="border border-neutral-200 rounded-md px-3 py-1.5 text-xs text-gray-700 bg-white"
+                      value={historyFilters.itemsPerPage}
+                      onChange={(e) =>
+                        setHistoryFilters((prev) => ({
+                          ...prev,
+                          page: 1,
+                          itemsPerPage: Number(e.target.value),
+                        }))
+                      }
+                    >
+                      {[10, 20, 50, 100].map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Loading indicator */}
+                  {loadingHistory && (
+                    <Loader2 className="w-4 h-4 animate-spin text-[#7047EB]/50" />
+                  )}
                 </div>
 
+                {/* Summary strip */}
+                {!loadingHistory && historyData.length > 0 && (
+                  <div className="flex items-center gap-4 mb-3 text-xs text-gray-500">
+                    <span>Showing <span className="font-semibold text-gray-700">{historyData.length}</span> of <span className="font-semibold text-gray-700">{historyTotal}</span> records</span>
+                  </div>
+                )}
+
                 <UniversalTable
-                  data={stockMovementData}
+                  data={historyData}
                   columns={stockMovementColumns}
-                  isLoading={loadingStockData}
-                  enablePagination={true}
-                  initialPageSize={10}
+                  isLoading={loadingHistory}
+                  enablePagination={false}
                   enableFiltering={false}
                 />
+
+                {/* Manual pagination */}
+                {historyTotal > historyFilters.itemsPerPage && (
+                  <div className="flex justify-center items-center gap-3 mt-4">
+                    <button
+                      className="text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      disabled={historyFilters.page <= 1}
+                      onClick={() => setHistoryFilters((p) => ({ ...p, page: p.page - 1 }))}
+                    >
+                      Previous
+                    </button>
+                    <span className="text-xs text-gray-500">
+                      Page <span className="font-semibold">{historyFilters.page}</span> of <span className="font-semibold">{totalPages}</span>
+                    </span>
+                    <button
+                      className="text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      disabled={historyFilters.page >= totalPages}
+                      onClick={() => setHistoryFilters((p) => ({ ...p, page: p.page + 1 }))}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+
               </div>
             </div>
           )}
@@ -339,7 +494,7 @@ const SingleItem: React.FC = () => {
           isAnyModalOpen={showAddCategoriesModal || showAddUnitOfMeasurementModal || showAddWarehouseModal}
           isOpen={isEditModalOpen}
           onClose={() => setIsEditModalOpen(false)}
-          item={itemdetails}
+          item={itemdetails as any}
           showAddUnitOfMeasurementModal={() => setShowAddUnitOfMeasurementModal(true)}
           showAddWarehouseModal={() => setShowAddWarehouseModal(true)}
           showShowCategoriesModal={() => setShowAddCategoriesModal(true)}
