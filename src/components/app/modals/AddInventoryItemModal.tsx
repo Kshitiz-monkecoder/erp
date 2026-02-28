@@ -13,7 +13,6 @@ import {
   Truck,
   Info,
   Trash2,
-  X,
 } from "lucide-react";
 import React, { useRef, useState, useEffect } from "react";
 import SuccessToast from "../toasts/SuccessToast";

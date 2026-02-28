@@ -509,7 +509,7 @@ const BOMDetails: React.FC = () => {
       ]);
       // Add child BOM rows
       if (material.childBOM) {
-        material.childBOM.rawMaterials.forEach((subRM, j) => {
+        material.childBOM.rawMaterials.forEach((subRM) => {
           rawMaterialsData.push([`  └ ${subRM.sku}`, subRM.name, subRM.category, subRM.quantity.toString(), subRM.unit, "-", "-", "-", subRM.comment, "(Child BOM RM)"]);
         });
       }
