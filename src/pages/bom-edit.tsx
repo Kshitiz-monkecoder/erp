@@ -1150,9 +1150,11 @@ const EditBOM: React.FC = () => {
             const rawMaterials: UIRawMaterial[] = (bomItem.rawMaterials ?? []).map((rm: any, rmIdx: number) => {
               const rmItem = items.find((i) => i.id === rm.item?.id?.toString());
 
-              // Populate child BOM if the RM row has a subBom reference
+              // Populate child BOM only on the first RM row (rmIdx === 0).
+              // subBom is stored at bomItem level — there is no per-row indicator,
+              // and the save payload uses `firstChildBOM` (first linked RM).
               let childBOM: LinkedChildBOM | null = null;
-              if (rm.subBom || bomItem.subBom) {
+              if (rmIdx === 0 && (rm.subBom || bomItem.subBom)) {
                 const subBomData = rm.subBom ?? bomItem.subBom;
                 if (subBomData) {
                   // Build child BOM from API data
@@ -1456,9 +1458,11 @@ const EditBOM: React.FC = () => {
         </Button>
       </div>
 
-      {/* Sticky footer */}
       <div className="sticky bottom-0 border-t bg-white shadow-lg mt-8 z-10">
         <div className="px-6 py-4 flex justify-end gap-3">
+          <Button variant="outline" onClick={() => navigate(`/production/bom/${id}`)} disabled={saving} className="min-w-[120px]">
+            Cancel
+          </Button>
           <Button variant="outline" onClick={handleSaveDraft} disabled={saving} className="min-w-[120px]">
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save as Draft
           </Button>

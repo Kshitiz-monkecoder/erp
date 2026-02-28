@@ -1,10 +1,12 @@
 // src/pages/ItemMaster.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import UniversalTable from "@/components/app/tables";
 import { InventoryItem } from "./types";
-import { get } from "@/lib/apiService";
 import { ColumnDef } from "@tanstack/react-table";
-import { ArrowUpRight, ChevronDown, Filter, Plus, RefreshCcw, ArrowRightLeft } from "lucide-react";
+import {
+  ArrowUpRight, ChevronDown, Filter, Plus, RefreshCcw,
+  ArrowRightLeft, ArrowUpDown, ArrowUp, ArrowDown,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import SelectFilter, { OptionType } from "@/components/app/SelectFilter";
 import MultiSelectWithSearch from "@/components/app/MultiSelectWithSearch";
@@ -14,10 +16,7 @@ import AddCategoriesModal from "@/components/app/modals/AddCategoriesModal";
 import AddWarehouseModal from "@/components/app/modals/AddWarehouseModal";
 import CreateStockTransferModal from "@/components/app/modals/CreateStockTransferModal";
 import UpdateProductStockModal from "@/components/ui/UpdateProductStockModal";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type StockStatus = "all" | "negative" | "low" | "excess";
+import { itemAPI, StockStatus, ItemSortField } from "@/services/itemService";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -34,14 +33,31 @@ const statusOptions: OptionType[] = [
   { label: "Excess Stock", value: "excess" },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Column id → API sort field
+const SORT_FIELD_MAP: Record<string, ItemSortField> = {
+  itemId: "sku",
+  itemName: "name",
+  itemCategory: "category",
+  unit: "unit",
+  currentStock: "currentStock",
+  defaultPrice: "defaultPrice",
+};
 
-const isNegativeStock = (item: InventoryItem) => Number(item.currentStock) < 0;
-const isLowStock = (item: InventoryItem) =>
-  Number(item.currentStock) >= 0 &&
-  Number(item.currentStock) < Number(item.minimumStockLevel ?? 0);
-const isExcessStock = (item: InventoryItem) =>
-  Number(item.currentStock) > Number(item.maximumStockLevel ?? Infinity);
+// ─── Sort direction state ─────────────────────────────────────────────────────
+
+type SortDir = "asc" | "desc" | null;
+
+interface SortState {
+  columnId: string | null;
+  direction: SortDir;
+}
+
+// Sort icon helper
+const SortIcon: React.FC<{ columnId: string; sortState: SortState }> = ({ columnId, sortState }) => {
+  if (sortState.columnId !== columnId) return <ArrowUpDown className="w-3.5 h-3.5 ml-1 text-gray-300" />;
+  if (sortState.direction === "asc") return <ArrowUp className="w-3.5 h-3.5 ml-1 text-[#7047EB]" />;
+  return <ArrowDown className="w-3.5 h-3.5 ml-1 text-[#7047EB]" />;
+};
 
 // ─── Stock Card ───────────────────────────────────────────────────────────────
 
@@ -49,44 +65,23 @@ interface StockCardProps {
   label: string;
   count: number;
   status: StockStatus;
-  activeStatus: StockStatus;
+  activeStatus: StockStatus | "all";
   onClick: (s: StockStatus) => void;
   color: "red" | "amber" | "blue";
 }
 
 const colorMap = {
   red: {
-    activeBorder: "border-red-400",
-    activeLabel: "text-red-600",
-    activeCount: "text-red-600",
-    activeBg: "bg-red-50",
-    inactiveBorder: "border-red-200",
-    inactiveBg: "bg-red-50/40",
-    inactiveLabel: "text-red-400",
-    inactiveCount: "text-red-500",
-    filterIcon: "text-red-400",
+    activeBorder: "border-red-400", activeLabel: "text-red-600", activeCount: "text-red-600", activeBg: "bg-red-50",
+    inactiveBorder: "border-red-200", inactiveBg: "bg-red-50/40", inactiveLabel: "text-red-400", inactiveCount: "text-red-500", filterIcon: "text-red-400",
   },
   amber: {
-    activeBorder: "border-amber-400",
-    activeLabel: "text-amber-700",
-    activeCount: "text-amber-700",
-    activeBg: "bg-amber-50",
-    inactiveBorder: "border-amber-200",
-    inactiveBg: "bg-amber-50/40",
-    inactiveLabel: "text-amber-500",
-    inactiveCount: "text-amber-600",
-    filterIcon: "text-amber-400",
+    activeBorder: "border-amber-400", activeLabel: "text-amber-700", activeCount: "text-amber-700", activeBg: "bg-amber-50",
+    inactiveBorder: "border-amber-200", inactiveBg: "bg-amber-50/40", inactiveLabel: "text-amber-500", inactiveCount: "text-amber-600", filterIcon: "text-amber-400",
   },
   blue: {
-    activeBorder: "border-blue-400",
-    activeLabel: "text-blue-700",
-    activeCount: "text-blue-700",
-    activeBg: "bg-blue-50",
-    inactiveBorder: "border-blue-200",
-    inactiveBg: "bg-blue-50/40",
-    inactiveLabel: "text-blue-400",
-    inactiveCount: "text-blue-500",
-    filterIcon: "text-blue-400",
+    activeBorder: "border-blue-400", activeLabel: "text-blue-700", activeCount: "text-blue-700", activeBg: "bg-blue-50",
+    inactiveBorder: "border-blue-200", inactiveBg: "bg-blue-50/40", inactiveLabel: "text-blue-400", inactiveCount: "text-blue-500", filterIcon: "text-blue-400",
   },
 };
 
@@ -95,21 +90,13 @@ const StockCard: React.FC<StockCardProps> = ({ label, count, status, activeStatu
   const c = colorMap[color];
   return (
     <button
-      onClick={() => onClick(isActive ? "all" : status)}
-      className={`
-        flex items-center justify-between flex-1 px-5 py-3 rounded-lg border-2 transition-all duration-150 select-none text-left
-        ${isActive
-          ? `${c.activeBorder} ${c.activeBg} shadow-sm`
-          : `${c.inactiveBorder} ${c.inactiveBg} hover:shadow-sm`}
-      `}
+      onClick={() => onClick(status)}
+      className={`flex items-center justify-between flex-1 px-5 py-3 rounded-lg border-2 transition-all duration-150 select-none text-left
+        ${isActive ? `${c.activeBorder} ${c.activeBg} shadow-sm` : `${c.inactiveBorder} ${c.inactiveBg} hover:shadow-sm`}`}
     >
-      <span className={`text-sm font-semibold ${isActive ? c.activeLabel : c.inactiveLabel}`}>
-        {label}
-      </span>
+      <span className={`text-sm font-semibold ${isActive ? c.activeLabel : c.inactiveLabel}`}>{label}</span>
       <div className="flex items-center gap-2">
-        <span className={`text-xl font-bold ${isActive ? c.activeCount : c.inactiveCount}`}>
-          {count}
-        </span>
+        <span className={`text-xl font-bold ${isActive ? c.activeCount : c.inactiveCount}`}>{count}</span>
         <Filter className={`w-4 h-4 ${c.filterIcon} ${isActive ? "opacity-100" : "opacity-60"}`} />
       </div>
     </button>
@@ -128,9 +115,7 @@ const ActionsDropdown: React.FC<ActionsDropdownProps> = ({ onUpdateStock, onStoc
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
+    const handleClick = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
@@ -138,20 +123,15 @@ const ActionsDropdown: React.FC<ActionsDropdownProps> = ({ onUpdateStock, onStoc
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(v => !v)}
         className="flex items-center gap-2 px-4 py-[7px] rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 font-medium text-sm transition-colors shadow-sm h-8"
       >
         Actions
         <ChevronDown className={`w-4 h-4 transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
       </button>
-
       {open && (
         <div className="absolute right-0 mt-1.5 w-60 bg-white rounded-xl border border-gray-100 shadow-xl z-30 py-1.5 overflow-hidden">
-          {/* Update Product Stock */}
-          <button
-            onClick={() => { setOpen(false); onUpdateStock(); }}
-            className="w-full flex items-start gap-3 px-4 py-3 hover:bg-emerald-50 transition-colors group"
-          >
+          <button onClick={() => { setOpen(false); onUpdateStock(); }} className="w-full flex items-start gap-3 px-4 py-3 hover:bg-emerald-50 transition-colors group">
             <div className="mt-0.5 p-1.5 rounded-md bg-emerald-100 group-hover:bg-emerald-200 transition-colors flex-shrink-0">
               <RefreshCcw className="w-3.5 h-3.5 text-emerald-600" />
             </div>
@@ -160,14 +140,8 @@ const ActionsDropdown: React.FC<ActionsDropdownProps> = ({ onUpdateStock, onStoc
               <p className="text-xs text-gray-400 mt-0.5 leading-snug">Add or reduce item quantity in bulk</p>
             </div>
           </button>
-
           <div className="mx-3 border-t border-gray-100" />
-
-          {/* Stock Transfer */}
-          <button
-            onClick={() => { setOpen(false); onStockTransfer(); }}
-            className="w-full flex items-start gap-3 px-4 py-3 hover:bg-blue-50 transition-colors group"
-          >
+          <button onClick={() => { setOpen(false); onStockTransfer(); }} className="w-full flex items-start gap-3 px-4 py-3 hover:bg-blue-50 transition-colors group">
             <div className="mt-0.5 p-1.5 rounded-md bg-blue-100 group-hover:bg-blue-200 transition-colors flex-shrink-0">
               <ArrowRightLeft className="w-3.5 h-3.5 text-blue-600" />
             </div>
@@ -185,11 +159,16 @@ const ActionsDropdown: React.FC<ActionsDropdownProps> = ({ onUpdateStock, onStoc
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 const ItemMaster: React.FC = () => {
-  const [itemData, setItemData] = useState<Array<InventoryItem>>([]);
+  const [itemData, setItemData] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [maxID, setMaxID] = useState<number>(0);
+  const [totalItems, setTotalItems] = useState<number>(0);
+  const [summary, setSummary] = useState({ negativeStock: 0, lowStock: 0, excessStock: 0 });
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [sortState, setSortState] = useState<SortState>({ columnId: null, direction: null });
   const [selectedProductType, setSelectedProductType] = useState<string>("all");
-  const [activeStockStatus, setActiveStockStatus] = useState<StockStatus>("all");
+  const [activeStockStatus, setActiveStockStatus] = useState<StockStatus | "all">("all");
 
   const [showAddUnitOfMeasurementModal, setShowAddUnitOfMeasurementModal] = useState(false);
   const [showAddWarehouseModal, setShowAddWarehouseModal] = useState(false);
@@ -200,54 +179,93 @@ const ItemMaster: React.FC = () => {
 
   const navigateTo = useNavigate();
 
-  useEffect(() => {
-    fetchInventoryItems();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProductType]);
+  // ─── Column sort click handler ────────────────────────────────────────────
 
-  const fetchInventoryItems = async () => {
+  const handleColumnSort = useCallback((columnId: string) => {
+    if (!(columnId in SORT_FIELD_MAP)) return;
+    setSortState(prev => {
+      if (prev.columnId !== columnId) return { columnId, direction: "asc" };
+      if (prev.direction === "asc") return { columnId, direction: "desc" };
+      return { columnId: null, direction: null };
+    });
+    setPage(1);
+  }, []);
+
+  // ─── Build payload ────────────────────────────────────────────────────────
+
+  const buildPayload = useCallback(() => {
+    const hasSorting = sortState.columnId && sortState.direction;
+    return {
+      filters: {
+        ...(selectedProductType !== "all" && { isProduct: selectedProductType === "true" }),
+        ...(activeStockStatus !== "all" && { stockStatus: activeStockStatus as StockStatus }),
+        itemStatus: "all",
+      },
+      search: {},
+      pagination: {
+        page,
+        itemsPerPage: pageSize,
+        sortBy: hasSorting ? [SORT_FIELD_MAP[sortState.columnId!]] : ["createdAt" as ItemSortField],
+        sortDesc: hasSorting ? [sortState.direction === "desc"] : [true],
+      },
+    };
+  }, [selectedProductType, activeStockStatus, page, pageSize, sortState]);
+
+  // ─── Fetch items ──────────────────────────────────────────────────────────
+
+  const fetchInventoryItems = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      let queryParams = "";
-      if (selectedProductType === "true") queryParams = "?isProduct=true";
-      else if (selectedProductType === "false") queryParams = "?isProduct=false";
-      const response = await get(`/inventory/item${queryParams}`);
-      if (!response) throw new Error("Invalid response from server");
-      const data: InventoryItem[] = response.data || [];
-      setItemData(data);
-      setMaxID(data.reduce((max: number, item: InventoryItem) => Math.max(max, (item.id as number) || 0), 0));
+      const response = await itemAPI.getItems(buildPayload());
+      if (response.status) {
+        // API returns data as a flat array directly
+        const raw = response.data as unknown;
+        const data = (Array.isArray(raw) ? raw : (raw as any)?.data ?? []) as InventoryItem[];
+        const total = Array.isArray(raw) ? data.length : ((raw as any)?.total_length ?? data.length);
+        setItemData(data);
+        setTotalItems(total);
+        setMaxID(data.reduce((max, item) => Math.max(max, (item.id as number) || 0), 0));
+        if ((response as any).summary) setSummary((response as any).summary);
+      }
     } catch (error) {
       console.error("Error fetching inventory items:", error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [buildPayload]);
 
-  const negativeCount = useMemo(() => itemData.filter(isNegativeStock).length, [itemData]);
-  const lowCount = useMemo(() => itemData.filter(isLowStock).length, [itemData]);
-  const excessCount = useMemo(() => itemData.filter(isExcessStock).length, [itemData]);
+  useEffect(() => { fetchInventoryItems(); }, [fetchInventoryItems]);
 
-  const filteredData = useMemo(() => {
-    if (activeStockStatus === "negative") return itemData.filter(isNegativeStock);
-    if (activeStockStatus === "low") return itemData.filter(isLowStock);
-    if (activeStockStatus === "excess") return itemData.filter(isExcessStock);
-    return itemData;
-  }, [itemData, activeStockStatus]);
+  const handleProductTypeChange = (value: string) => { setSelectedProductType(value); setActiveStockStatus("all"); setPage(1); };
+  const handleStockStatusChange = (status: StockStatus) => { setActiveStockStatus(prev => prev === status ? "all" : status); setPage(1); };
+  const handleStatusDropdownChange = (value: string) => { setActiveStockStatus(value as StockStatus | "all"); setPage(1); };
+  const handleRefreshItemTable = () => { fetchInventoryItems(); };
 
-  const handleProductTypeChange = (value: string) => { setSelectedProductType(value); setActiveStockStatus("all"); };
-  const handleStockStatusChange = (status: StockStatus) => setActiveStockStatus(status);
-  const handleStatusDropdownChange = (value: string) => setActiveStockStatus(value as StockStatus);
-  const handleRefreshItemTable = () => fetchInventoryItems();
+  const toggleAddUnitOfMeasurementModal = () => setShowAddUnitOfMeasurementModal(p => !p);
+  const toggleAddInventoryItemModal = () => setShowAddInventoryItemModal(p => !p);
+  const toggleAddWarehouseModal = () => setShowAddWarehouseModal(p => !p);
+  const toggleAddCategoriesModal = () => setShowAddCategoriesModal(p => !p);
 
-  const toggleAddUnitOfMeasurementModal = () => setShowAddUnitOfMeasurementModal((p) => !p);
-  const toggleAddInventoryItemModal = () => setShowAddInventoryItemModal((p) => !p);
-  const toggleAddWarehouseModal = () => setShowAddWarehouseModal((p) => !p);
-  const toggleAddCategoriesModal = () => setShowAddCategoriesModal((p) => !p);
+  const totalPages = Math.ceil(totalItems / pageSize);
 
-  const columns: ColumnDef<InventoryItem>[] = [
+  // ─── Columns ──────────────────────────────────────────────────────────────
+
+  // Wrap sortable column headers with click handlers and sort icons
+  const sortableHeader = (label: string, columnId: string) => (
+    <button
+      className="flex items-center font-medium text-inherit hover:text-[#7047EB] transition-colors"
+      onClick={() => handleColumnSort(columnId)}
+    >
+      {label}
+      <SortIcon columnId={columnId} sortState={sortState} />
+    </button>
+  );
+
+  const columns: ColumnDef<InventoryItem>[] = useMemo(() => [
     {
-      header: "Item Id",
+      header: () => sortableHeader("Item Id", "itemId"),
       accessorKey: "itemId",
+      id: "itemId",
       cell: ({ row }) => (
         <div
           onClick={() => navigateTo(`/inventory/item-details/${row.original.id}`)}
@@ -257,97 +275,72 @@ const ItemMaster: React.FC = () => {
           <ArrowUpRight className="text-blue-500 w-5" />
         </div>
       ),
-      meta: { filterVariant: "select" },
     },
     {
-      header: "Item Name",
+      header: () => sortableHeader("Item Name", "itemName"),
       accessorKey: "itemName",
+      id: "itemName",
       cell: ({ row }) => <div className="font-normal min-w-32">{row.original.name}</div>,
-      meta: { filterVariant: "select" },
     },
     {
-      header: "Item Category",
+      header: () => sortableHeader("Item Category", "itemCategory"),
       accessorKey: "itemCategory",
+      id: "itemCategory",
       cell: ({ row }) => <div className="font-normal min-w-32">{row.original.category?.name}</div>,
-      filterFn: "equals",
-      meta: { filterVariant: "select" },
     },
     {
-      header: "Unit",
+      header: () => sortableHeader("Unit", "unit"),
       accessorKey: "unit",
+      id: "unit",
       cell: ({ row }) => <div className="font-normal">{row.original.unit?.name}</div>,
-      meta: { filterVariant: "select" },
     },
     {
-      header: "Current Stock",
+      header: () => sortableHeader("Current Stock", "currentStock"),
       accessorKey: "currentStock",
+      id: "currentStock",
       cell: ({ row }) => {
         const stock = Number(row.original.currentStock);
-        return (
-          <div className={`font-semibold min-w-28 ${stock < 0 ? "text-red-500" : "text-gray-800"}`}>
-            {stock.toLocaleString()}
-          </div>
-        );
+        return <div className={`font-semibold min-w-28 ${stock < 0 ? "text-red-500" : "text-gray-800"}`}>{stock.toLocaleString()}</div>;
       },
-      meta: { filterVariant: "select" },
     },
     {
-      header: "Default Price",
+      header: () => sortableHeader("Default Price", "defaultPrice"),
       accessorKey: "defaultPrice",
+      id: "defaultPrice",
       cell: ({ row }) => <div className="font-normal min-w-32">{row.original.defaultPrice}</div>,
-      meta: { filterVariant: "select" },
     },
     {
       header: "Regular Buying Price",
       accessorKey: "regularBuyingPrice",
+      id: "regularBuyingPrice",
       cell: ({ row }) => <div className="font-normal min-w-32">{row.original.regularBuyingPrice}</div>,
-      meta: { filterVariant: "select" },
     },
-  ];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [navigateTo, sortState]);
 
   return (
     <>
-      {/* ── Stock Summary Bar ─────────────────────────────────────────────── */}
+      {/* ── Stock Summary Bar ──────────────────────────────────────────────── */}
       <div className="flex gap-3 mb-4 items-stretch">
-        <StockCard label="Negative Stock" count={negativeCount} status="negative" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="red" />
-        <StockCard label="Low Stock" count={lowCount} status="low" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="amber" />
-        <StockCard label="Excess Stock" count={excessCount} status="excess" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="blue" />
+        <StockCard label="Negative Stock" count={summary.negativeStock} status="negative" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="red" />
+        <StockCard label="Low Stock" count={summary.lowStock} status="low" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="amber" />
+        <StockCard label="Excess Stock" count={summary.excessStock} status="excess" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="blue" />
       </div>
 
       {/* ── Table ─────────────────────────────────────────────────────────── */}
-      {/*
-        We intentionally omit enableCreate / onCreateClick from UniversalTable
-        and instead render both the Actions button AND the Add Item button
-        ourselves inside customFilterSection using ml-auto, so they appear
-        side-by-side in the correct order: [Actions] [+ Add Item]
-      */}
       <UniversalTable<InventoryItem>
-        data={filteredData}
+        data={itemData}
         columns={columns}
         isLoading={loading}
+        enablePagination={false}
+        enableFiltering={false}
         customFilterSection={() => (
           <>
-            {/* ── Left: filter controls ── */}
-            <SelectFilter
-              label="Products/Services"
-              items={productOptions}
-              defaultValue={productOptions[0].value}
-              onValueChange={handleProductTypeChange}
-            />
-            <SelectFilter
-              label="Status"
-              items={statusOptions}
-              defaultValue={activeStockStatus}
-              onValueChange={handleStatusDropdownChange}
-            />
+            <SelectFilter label="Products/Services" items={productOptions} defaultValue={productOptions[0].value} onValueChange={handleProductTypeChange} />
+            <SelectFilter label="Status" items={statusOptions} defaultValue={activeStockStatus} onValueChange={handleStatusDropdownChange} />
             <MultiSelectWithSearch columns={[]} label="Show/Hide Columns" />
-
-            {/* ── Right: Actions + Add Item ── */}
             <div className="flex items-center gap-2 ml-auto">
-              <ActionsDropdown
-                onUpdateStock={() => setShowUpdateStockModal(true)}
-                onStockTransfer={() => setShowStockTransferModal(true)}
-              />
+              <ActionsDropdown onUpdateStock={() => setShowUpdateStockModal(true)} onStockTransfer={() => setShowStockTransferModal(true)} />
               <button
                 onClick={toggleAddInventoryItemModal}
                 className="flex items-center gap-1.5 bg-[#7047EB] hover:bg-[#5f3bcc] text-white text-sm font-medium px-4 py-[7px] rounded-md h-8 transition-colors shadow-sm"
@@ -360,27 +353,40 @@ const ItemMaster: React.FC = () => {
         )}
       />
 
-      {/* ── Modals ────────────────────────────────────────────────────────── */}
+      {/* ── Server-side Pagination ─────────────────────────────────────────── */}
+      {totalItems > 0 && (
+        <div className="flex flex-col sm:flex-row justify-center items-center gap-3 md:gap-5 mt-4">
+          <div className="flex gap-3 md:gap-5 items-center">
+            <div className="flex items-center text-neutral-600 gap-2">
+              <div className="text-xs">Rows per page:</div>
+              <select
+                className="text-xs bg-neutral-100 shadow rounded-sm px-2 py-1 cursor-pointer"
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+              >
+                {[10, 20, 30, 50].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+            <button className="text-neutral-600 disabled:opacity-40" onClick={() => setPage(1)} disabled={page <= 1}>{"<<"}</button>
+            <button className="text-neutral-600 disabled:opacity-40" onClick={() => setPage(p => p - 1)} disabled={page <= 1}>{"<"}</button>
+            <button className="text-neutral-600 disabled:opacity-40" onClick={() => setPage(p => p + 1)} disabled={page >= totalPages}>{">"}</button>
+            <button className="text-neutral-600 disabled:opacity-40" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>{">>"}</button>
+          </div>
+          <span className="text-xs text-neutral-600">
+            Page <span className="font-medium">{page}</span> of <span className="font-medium">{totalPages}</span>
+            <span className="text-neutral-400 ml-2">({totalItems} items)</span>
+          </span>
+        </div>
+      )}
 
+      {/* ── Modals ────────────────────────────────────────────────────────── */}
       <UpdateProductStockModal
         isOpen={showUpdateStockModal}
         onClose={() => setShowUpdateStockModal(false)}
-        onSuccess={() => fetchInventoryItems()}
-        items={itemData.map((i) => ({
-          id: i.id as number,
-          name: i.name,
-          sku: i.sku,
-          currentStock: Number(i.currentStock),
-          defaultPrice: i.defaultPrice,
-          unit: i.unit,
-        }))}
+        onSuccess={handleRefreshItemTable}
+        items={itemData.map(i => ({ id: i.id as number, name: i.name, sku: i.sku, currentStock: Number(i.currentStock), defaultPrice: i.defaultPrice, unit: i.unit }))}
       />
-
-      <CreateStockTransferModal
-        isOpen={showStockTransferModal}
-        onClose={() => setShowStockTransferModal(false)}
-      />
-
+      <CreateStockTransferModal isOpen={showStockTransferModal} onClose={() => setShowStockTransferModal(false)} />
       <AddInventoryItemModal
         isAnyModalOpen={showAddCategoriesModal || showAddWarehouseModal || showAddUnitOfMeasurementModal}
         isOpen={showAddInventoryItemModal}
@@ -391,7 +397,6 @@ const ItemMaster: React.FC = () => {
         currentItemNo={maxID + 1}
         onItemAdded={handleRefreshItemTable}
       />
-
       <AddUnitOfMeasurementModal isOpen={showAddUnitOfMeasurementModal} onClose={toggleAddUnitOfMeasurementModal} />
       <AddCategoriesModal isOpen={showAddCategoriesModal} onClose={toggleAddCategoriesModal} onSuccess={() => {}} />
       <AddWarehouseModal isOpen={showAddWarehouseModal} onClose={toggleAddWarehouseModal} onSuccess={() => {}} />

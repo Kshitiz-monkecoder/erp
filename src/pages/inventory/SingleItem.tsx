@@ -325,6 +325,14 @@ const SingleItem: React.FC = () => {
                     <div><div>MRP:</div><div className="font-light">₹{itemdetails?.mrp}</div></div>
                     <div><div>Dealer Price:</div><div className="font-light">₹{itemdetails?.dealerPrice}</div></div>
                     <div><div>Distributor Price:</div><div className="font-light">₹{itemdetails?.distributorPrice}</div></div>
+                    <div>
+                      <div>Weighted Avg. Price:</div>
+                      <div className="font-light">
+                        {Number(itemdetails?.weightedAveragePrice) > 0
+                          ? `₹${Number(itemdetails?.weightedAveragePrice).toFixed(2)}`
+                          : "₹0.00"}
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div className="bg-neutral-100 mt-6 px-3 py-1 text-[#8A8AA3] w-full flex justify-between items-center">
@@ -366,6 +374,60 @@ const SingleItem: React.FC = () => {
                     <div className="font-light">{itemdetails?.currentStock || 0} {itemdetails?.unit?.name}</div>
                   </div>
                 </div>
+
+                {/* ── Vendor Lead Times ─────────────────────────────── */}
+                {(itemdetails as any)?.vendorLeadTimes?.length > 0 && (
+                  <>
+                    <div className="bg-neutral-100 mt-6 px-3 py-1 text-[#8A8AA3] w-full flex justify-between items-center">
+                      <div>VENDOR LEAD TIMES</div>
+                    </div>
+                    <div className="mt-4 px-4 space-y-3">
+                      {(itemdetails as any).vendorLeadTimes.map((vlt: any) => (
+                        <div
+                          key={vlt.id}
+                          className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="w-7 h-7 rounded-full bg-[#7047EB]/10 flex items-center justify-center flex-shrink-0">
+                              <span className="text-[10px] font-bold text-[#7047EB]">
+                                {vlt.vendor?.name?.charAt(0)?.toUpperCase() || "V"}
+                              </span>
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-gray-800 truncate">
+                                {vlt.vendor?.name}
+                                {vlt.isDefault && (
+                                  <span className="ml-2 text-xs text-[#7047EB] bg-[#7047EB]/10 px-1.5 py-0.5 rounded-full font-normal">Default</span>
+                                )}
+                              </div>
+                              {vlt.vendor?.companyName && (
+                                <div className="text-xs text-gray-400 truncate">{vlt.vendor.companyName}</div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-600">
+                            <div>
+                              <span className="text-gray-400">Lead Time: </span>
+                              <span className="font-semibold text-gray-800">{vlt.leadTimeDays} days</span>
+                            </div>
+                            {vlt.lastDeliveryDate && (
+                              <div>
+                                <span className="text-gray-400">Last Delivery: </span>
+                                <span className="font-medium">{vlt.lastDeliveryDate}</span>
+                              </div>
+                            )}
+                            {vlt.vendor?.phoneNo && (
+                              <div>
+                                <span className="text-gray-400">Phone: </span>
+                                <span className="font-medium">{vlt.vendor.phoneNo}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}

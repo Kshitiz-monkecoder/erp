@@ -1,7 +1,7 @@
 // src/pages/production/bom-details.tsx
 import React, { useState, useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Pencil, Trash2, FileText, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2, FileText, Eye, EyeOff, ChevronDown, ChevronUp, Link2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -38,6 +38,22 @@ interface RawMaterial {
   costAllocation: number;
   pricePerUnit: number;
   totalPrice: number;
+  comment: string;
+  // Child BOM data (populated when subBomId exists)
+  childBOM?: {
+    bomId: number;
+    bomNumber: string;
+    bomName: string;
+    rawMaterials: ChildBOMRMRow[];
+  } | null;
+}
+
+interface ChildBOMRMRow {
+  sku: string;
+  name: string;
+  category: string;
+  quantity: number;
+  unit: string;
   comment: string;
 }
 
@@ -77,6 +93,29 @@ interface OtherCharge {
   name: string;
   amount: string;
   comment: string;
+}
+
+// Child BOM nested shape (returned directly in bomItem.subBom)
+interface ApiSubBom {
+  id: number;
+  docNumber: string;
+  docName: string;
+  bomItems: Array<{
+    finishedGoods: {
+      quantity: number;
+      costAlloc: number;
+      comment: string;
+      item: { sku: string; name: string; type?: string };
+      unit: { name: string };
+    };
+    rawMaterials: Array<{
+      quantity: number;
+      costAlloc: number;
+      comment: string;
+      item: { sku: string; name: string; type?: string };
+      unit: { name: string };
+    }>;
+  }>;
 }
 
 // API Response interfaces based on the provided JSON
@@ -164,6 +203,7 @@ interface ApiOtherCharge {
 
 interface ApiBOMItem {
   id: number;
+  subBom?: ApiSubBom | null; // Child BOM nested directly in the bomItem
   finishedGoods: ApiFinishedGood;
   rawMaterials: ApiRawMaterial[];
   routing: ApiRoutingItem[];
@@ -218,7 +258,9 @@ const BOMDetails: React.FC = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  
+  // Tracks which RM rows have their child BOM expanded
+  const [childBOMExpandedSet, setChildBOMExpandedSet] = useState<Set<number>>(new Set());
+
   const [bomDetails, setBomDetails] = useState<BOMDetailsType>({
     bomId: "BOM00000",
     bomName: "",
@@ -263,16 +305,15 @@ const BOMDetails: React.FC = () => {
   useEffect(() => {
     const fetchBOMData = async () => {
       if (!id) return;
-      
+
       try {
         setLoading(true);
         const response = await bomAPI.getBOM(parseInt(id));
-        
+
         if (response.status && response.data) {
           const apiData = response.data as unknown as ApiBOMResponse;
           setBomData(apiData);
-          
-          // Get the first BOM item (assuming single BOM item for now)
+
           const bomItem = apiData.bomItems[0];
 
           // Update bomDetails with API data
@@ -309,9 +350,33 @@ const BOMDetails: React.FC = () => {
             }]);
           }
 
-          // Transform Raw Materials
+          // Transform Raw Materials — parse subBom directly from the API response
           if (bomItem?.rawMaterials && bomItem.rawMaterials.length > 0) {
-            const transformedRawMaterials = bomItem.rawMaterials.map((rm: ApiRawMaterial) => ({
+            // subBom is nested at bomItem level (applies to all RM rows)
+            const subBomData = bomItem.subBom ?? null;
+
+            // Build child BOM once from the subBom data
+            let sharedChildBOM: RawMaterial["childBOM"] = null;
+            if (subBomData) {
+              const childRMs: ChildBOMRMRow[] = (subBomData.bomItems ?? []).flatMap((bi) =>
+                (bi.rawMaterials ?? []).map((crm) => ({
+                  sku: crm.item?.sku ?? "-",
+                  name: crm.item?.name ?? "-",
+                  category: crm.item?.type ?? "-",
+                  quantity: crm.quantity ?? 0,
+                  unit: crm.unit?.name ?? "-",
+                  comment: crm.comment || "-",
+                }))
+              );
+              sharedChildBOM = {
+                bomId: subBomData.id,
+                bomNumber: subBomData.docNumber,
+                bomName: subBomData.docName,
+                rawMaterials: childRMs,
+              };
+            }
+
+            const transformedRawMaterials: RawMaterial[] = bomItem.rawMaterials.map((rm: ApiRawMaterial, idx: number) => ({
               id: rm.id,
               code: rm.item.sku,
               name: rm.item.name,
@@ -321,9 +386,16 @@ const BOMDetails: React.FC = () => {
               costAllocation: rm.costAlloc,
               pricePerUnit: parseFloat(rm.item.defaultPrice) || 0,
               totalPrice: rm.quantity * (parseFloat(rm.item.defaultPrice) || 0),
-              comment: rm.comment || ""
+              comment: rm.comment || "",
+              // Only attach childBOM to the first RM row — subBom is stored at bomItem
+              // level (not per-RM), so we have no way to know which specific row it
+              // belongs to. The save payload uses `firstChildBOM`, matching this.
+              childBOM: idx === 0 ? sharedChildBOM : null,
             }));
+
             setRawMaterials(transformedRawMaterials);
+
+            // Child BOM rows are collapsed by default
           }
 
           // Transform Scrap Materials
@@ -374,12 +446,18 @@ const BOMDetails: React.FC = () => {
     fetchBOMData();
   }, [id]);
 
+  const toggleChildBOMExpanded = (idx: number) => {
+    setChildBOMExpandedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) { next.delete(idx); } else { next.add(idx); }
+      return next;
+    });
+  };
+
   // Download BOM as Excel
   const downloadBOMAsExcel = () => {
-    // Create workbook
     const workbook = XLSX.utils.book_new();
 
-    // BOM Details Sheet
     const bomDetailsData = [
       ["BOM DOCUMENT DETAILS"],
       ["Document Number:", bomDetails.bomId],
@@ -411,197 +489,107 @@ const BOMDetails: React.FC = () => {
     const bomDetailsSheet = XLSX.utils.aoa_to_sheet(bomDetailsData);
     XLSX.utils.book_append_sheet(workbook, bomDetailsSheet, "BOM Details");
 
-    // Finished Goods Sheet
     const finishedGoodsData = [
       ["ITEM ID", "ITEM NAME", "ITEM CATEGORY", "QUANTITY", "UNIT", "COST ALLOCATION (%)", "PRICE/UNIT", "TOTAL PRICE"]
     ];
-    
     finishedGoods.forEach((fg) => {
-      finishedGoodsData.push([
-        fg.code,
-        fg.name,
-        fg.category,
-        fg.quantity.toString(),
-        fg.unit,
-        fg.costAllocation.toString(),
-        `₹${fg.pricePerUnit.toFixed(2)}`,
-        `₹${fg.totalPrice.toFixed(2)}`
-      ]);
+      finishedGoodsData.push([fg.code, fg.name, fg.category, fg.quantity.toString(), fg.unit, fg.costAllocation.toString(), `₹${fg.pricePerUnit.toFixed(2)}`, `₹${fg.totalPrice.toFixed(2)}`]);
     });
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(finishedGoodsData), "Finished Goods");
 
-    const finishedGoodsSheet = XLSX.utils.aoa_to_sheet(finishedGoodsData);
-    XLSX.utils.book_append_sheet(workbook, finishedGoodsSheet, "Finished Goods");
-
-    // Raw Materials Sheet
     const rawMaterialsData = [
-      ["ITEM ID", "ITEM NAME", "ITEM CATEGORY", "QUANTITY", "UNIT", "COST ALLOCATION (%)", "PRICE/UNIT", "TOTAL PRICE", "COMMENT"]
+      ["ITEM ID", "ITEM NAME", "ITEM CATEGORY", "QUANTITY", "UNIT", "COST ALLOCATION (%)", "PRICE/UNIT", "TOTAL PRICE", "COMMENT", "CHILD BOM"]
     ];
-    
     rawMaterials.forEach((material) => {
       rawMaterialsData.push([
-        material.code,
-        material.name,
-        material.category,
-        material.quantity.toString(),
-        material.unit,
-        material.costAllocation.toString(),
-        `₹${material.pricePerUnit.toFixed(2)}`,
-        `₹${material.totalPrice.toFixed(2)}`,
-        material.comment || "-"
+        material.code, material.name, material.category, material.quantity.toString(), material.unit,
+        material.costAllocation.toString(), `₹${material.pricePerUnit.toFixed(2)}`, `₹${material.totalPrice.toFixed(2)}`,
+        material.comment || "-",
+        material.childBOM ? `${material.childBOM.bomNumber} - ${material.childBOM.bomName}` : "-"
       ]);
+      // Add child BOM rows
+      if (material.childBOM) {
+        material.childBOM.rawMaterials.forEach((subRM, j) => {
+          rawMaterialsData.push([`  └ ${subRM.sku}`, subRM.name, subRM.category, subRM.quantity.toString(), subRM.unit, "-", "-", "-", subRM.comment, "(Child BOM RM)"]);
+        });
+      }
     });
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rawMaterialsData), "Raw Materials");
 
-    const rawMaterialsSheet = XLSX.utils.aoa_to_sheet(rawMaterialsData);
-    XLSX.utils.book_append_sheet(workbook, rawMaterialsSheet, "Raw Materials");
-
-    // Scrap Materials Sheet
     const scrapMaterialsData = [
       ["ITEM ID", "ITEM NAME", "ITEM CATEGORY", "QUANTITY", "UNIT", "COST ALLOCATION (%)", "PRICE/UNIT", "TOTAL PRICE", "COMMENT"]
     ];
-    
     if (scrapMaterials.length > 0) {
       scrapMaterials.forEach((scrap) => {
-        scrapMaterialsData.push([
-          scrap.code,
-          scrap.name,
-          scrap.category,
-          scrap.quantity.toString(),
-          scrap.unit,
-          scrap.costAllocation.toString(),
-          `₹${scrap.pricePerUnit.toFixed(2)}`,
-          `₹${scrap.totalPrice.toFixed(2)}`,
-          scrap.comment || "-"
-        ]);
+        scrapMaterialsData.push([scrap.code, scrap.name, scrap.category, scrap.quantity.toString(), scrap.unit, scrap.costAllocation.toString(), `₹${scrap.pricePerUnit.toFixed(2)}`, `₹${scrap.totalPrice.toFixed(2)}`, scrap.comment || "-"]);
       });
     } else {
       scrapMaterialsData.push(["No scrap materials available"]);
     }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(scrapMaterialsData), "Scrap Materials");
 
-    const scrapMaterialsSheet = XLSX.utils.aoa_to_sheet(scrapMaterialsData);
-    XLSX.utils.book_append_sheet(workbook, scrapMaterialsSheet, "Scrap Materials");
-
-    // Routing Sheet
-    const routingData = [
-      ["ROUTING ID", "ROUTING NAME", "DESCRIPTION", "COMMENT"]
-    ];
-    
+    const routingData = [["ROUTING ID", "ROUTING NAME", "DESCRIPTION", "COMMENT"]];
     if (bomData?.bomItems[0]?.routing) {
       bomData.bomItems[0].routing.forEach(route => {
-        routingData.push([
-          route.routing.id.toString(),
-          `${route.routing.number}: ${route.routing.name}`,
-          route.routing.desc,
-          route.comment || "-"
-        ]);
+        routingData.push([route.routing.id.toString(), `${route.routing.number}: ${route.routing.name}`, route.routing.desc, route.comment || "-"]);
       });
     }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(routingData), "Routing");
 
-    const routingSheet = XLSX.utils.aoa_to_sheet(routingData);
-    XLSX.utils.book_append_sheet(workbook, routingSheet, "Routing");
-
-    // Other Charges Sheet
-    const otherChargesData = [
-      ["ID", "CLASSIFICATION", "AMOUNT", "COMMENT"]
-    ];
-    
+    const otherChargesData = [["ID", "CLASSIFICATION", "AMOUNT", "COMMENT"]];
     if (bomData?.bomItems[0]?.otherCharges) {
       bomData.bomItems[0].otherCharges.forEach((charge) => {
-        otherChargesData.push([
-          charge.id.toString(),
-          charge.classification,
-          `₹${charge.charges.toFixed(2)}`,
-          charge.comment || "-"
-        ]);
+        otherChargesData.push([charge.id.toString(), charge.classification, `₹${charge.charges.toFixed(2)}`, charge.comment || "-"]);
       });
     }
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(otherChargesData), "Other Charges");
 
-    const otherChargesSheet = XLSX.utils.aoa_to_sheet(otherChargesData);
-    XLSX.utils.book_append_sheet(workbook, otherChargesSheet, "Other Charges");
-
-    // Download the file
     XLSX.writeFile(workbook, `BOM_${bomDetails.bomId}_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   // Handle delete BOM
   const handleDeleteBOM = async () => {
-  if (!id) return;
-  setDeleting(true);
-
-  try {
-    const response = await bomAPI.deleteBOM(parseInt(id));
-
-    if (response.status) {
-      SuccessToast({
-        title: "BOM deleted successfully",
-        description: `BOM ${bomDetails.bomId} has been removed.`,
-      });
-
-      navigate("/production/bom");
+    if (!id) return;
+    setDeleting(true);
+    try {
+      const response = await bomAPI.deleteBOM(parseInt(id));
+      if (response.status) {
+        SuccessToast({ title: "BOM deleted successfully", description: `BOM ${bomDetails.bomId} has been removed.` });
+        navigate("/production/bom");
+      }
+    } catch (error: any) {
+      console.error("Error deleting BOM:", error);
+      const apiMessage = error?.response?.data?.message || error?.message || "Failed to delete BOM";
+      if (apiMessage.toLowerCase().includes("used") || apiMessage.toLowerCase().includes("reference") || error?.response?.status === 409) {
+        ErrorToast({ title: "Deletion Not Allowed", description: "This BOM cannot be deleted because it is being used in another document." });
+      } else {
+        ErrorToast({ title: "Error deleting BOM", description: apiMessage });
+      }
+    } finally {
+      setDeleting(false);
+      setShowDeleteModal(false);
     }
-  } catch (error: any) {
-    console.error("Error deleting BOM:", error);
+  };
 
-    const apiMessage =
-      error?.response?.data?.message ||
-      error?.message ||
-      "Failed to delete BOM";
-
-    // ⭐ Detect “being used” errors — adjust if your API text differs
-    if (
-      apiMessage.toLowerCase().includes("used") ||
-      apiMessage.toLowerCase().includes("reference") ||
-      error?.response?.status === 409
-    ) {
-      ErrorToast({
-        title: "Deletion Not Allowed",
-        description:
-          "This BOM cannot be deleted because it is being used in another document.",
-      });
-    } else {
-      ErrorToast({
-        title: "Error deleting BOM",
-        description: apiMessage,
-      });
-    }
-  } finally {
-    setDeleting(false);
-    setShowDeleteModal(false);
-  }
-};
-
-  // Handle edit BOM
   const handleEditBOM = () => {
     if (!id) return;
-    // Navigate to edit page
     navigate(`/production/bom/edit/${id}`);
   };
 
-  // Handle raw material comment update
   const handleMaterialCommentChange = (index: number, value: string) => {
     const updatedMaterials = [...rawMaterials];
-    updatedMaterials[index] = {
-      ...updatedMaterials[index],
-      comment: value
-    };
+    updatedMaterials[index] = { ...updatedMaterials[index], comment: value };
     setRawMaterials(updatedMaterials);
   };
 
-  // Handle scrap material comment update
   const handleScrapCommentChange = (index: number, value: string) => {
     const updatedScrap = [...scrapMaterials];
-    updatedScrap[index] = {
-      ...updatedScrap[index],
-      comment: value
-    };
+    updatedScrap[index] = { ...updatedScrap[index], comment: value };
     setScrapMaterials(updatedScrap);
   };
 
-  // Handle BOM details update
   const handleBOMDetailsChange = (field: keyof BOMDetailsType, value: string) => {
-    setBomDetails(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    setBomDetails(prev => ({ ...prev, [field]: value }));
   };
 
   if (loading) {
@@ -644,60 +632,35 @@ const BOMDetails: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              {/* View BOM Cost Toggle Button */}
               <Button
                 variant="outline"
                 onClick={() => setShowBOMCost(!showBOMCost)}
-                className={`flex items-center gap-2 ${
-                  showBOMCost ? "bg-blue-50 border-blue-200 text-blue-700" : ""
-                }`}
+                className={`flex items-center gap-2 ${showBOMCost ? "bg-blue-50 border-blue-200 text-blue-700" : ""}`}
               >
                 {showBOMCost ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 {showBOMCost ? "Hide Cost" : "View BOM Cost"}
               </Button>
-
-              {/* Export to Excel Button */}
-              <Button 
-                className="bg-green-600 hover:bg-green-700 text-white"
-                onClick={downloadBOMAsExcel}
-              >
-                <FileText className="w-4 h-4 mr-2" />
-                Export to Excel
+              <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={downloadBOMAsExcel}>
+                <FileText className="w-4 h-4 mr-2" /> Export to Excel
               </Button>
-
-              {/* Edit Button - Icon Only */}
-              <Button 
-                variant="outline"
-                onClick={handleEditBOM}
-                className="p-2"
-                title="Edit BOM"
-              >
+              <Button variant="outline" onClick={handleEditBOM} className="p-2" title="Edit BOM">
                 <Pencil className="w-4 h-4" />
               </Button>
-
-              {/* Delete Button - Icon Only */}
-              <Button 
-  variant="outline"
-  onClick={() => setShowDeleteModal(true)}
-  className="p-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
-  title="Delete BOM"
->
-  <Trash2 className="w-4 h-4" />
-</Button>
-
+              <Button variant="outline" onClick={() => setShowDeleteModal(true)} className="p-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700" title="Delete BOM">
+                <Trash2 className="w-4 h-4" />
+              </Button>
             </div>
           </div>
         </div>
       </div>
 
       <div className="max-w-8xl mx-auto px-8 py-6">
-        {/* Document Details - Always Visible */}
+        {/* Document Details */}
         <div className="bg-white rounded-lg shadow-sm border mb-6">
           <div className="px-6 py-4 border-b">
             <h2 className="text-lg font-semibold">Document Details</h2>
           </div>
           <div className="p-6">
-            {/* Basic Document Info */}
             <div className="grid grid-cols-2 gap-6 mb-8">
               <div className="space-y-4">
                 <div className="flex justify-between">
@@ -714,9 +677,7 @@ const BOMDetails: React.FC = () => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm font-medium text-gray-600">Status:</span>
-                  <span className={`text-sm font-semibold ${
-                    bomDetails.status.toLowerCase() === 'published' ? 'text-green-600' : 'text-yellow-600'
-                  }`}>
+                  <span className={`text-sm font-semibold ${bomDetails.status.toLowerCase() === 'published' ? 'text-green-600' : 'text-yellow-600'}`}>
                     {bomDetails.status}
                   </span>
                 </div>
@@ -740,7 +701,7 @@ const BOMDetails: React.FC = () => {
                 </div>
               </div>
             </div>
-            
+
             <div className="grid grid-cols-2 gap-6 mb-8">
               <div className="space-y-4">
                 <div className="flex justify-between">
@@ -760,31 +721,14 @@ const BOMDetails: React.FC = () => {
               </div>
             </div>
 
-            {/* Description and Comments */}
             <div className="grid grid-cols-2 gap-6 mb-8">
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-2 block">
-                  BOM Description
-                </label>
-                <Textarea 
-                  value={bomDetails.description}
-                  onChange={(e) => handleBOMDetailsChange('description', e.target.value)}
-                  className="min-h-[100px] text-sm"
-                  placeholder="No description provided"
-                  readOnly
-                />
+                <label className="text-sm font-medium text-gray-700 mb-2 block">BOM Description</label>
+                <Textarea value={bomDetails.description} onChange={(e) => handleBOMDetailsChange('description', e.target.value)} className="min-h-[100px] text-sm" placeholder="No description provided" readOnly />
               </div>
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-2 block">
-                  Comments
-                </label>
-                <Textarea 
-                  value={bomDetails.comments}
-                  onChange={(e) => handleBOMDetailsChange('comments', e.target.value)}
-                  className="min-h-[100px] text-sm"
-                  placeholder="No comments provided"
-                  readOnly
-                />
+                <label className="text-sm font-medium text-gray-700 mb-2 block">Comments</label>
+                <Textarea value={bomDetails.comments} onChange={(e) => handleBOMDetailsChange('comments', e.target.value)} className="min-h-[100px] text-sm" placeholder="No comments provided" readOnly />
               </div>
             </div>
           </div>
@@ -814,28 +758,22 @@ const BOMDetails: React.FC = () => {
           </div>
         </div>
 
-        {/* BOM Cost Section - Conditionally Rendered */}
+        {/* BOM Cost Section */}
         {showBOMCost && (
           <div className="bg-white rounded-lg shadow-sm border mb-6">
             <div className="px-6 py-4 border-b">
               <h2 className="text-lg font-semibold">BOM Cost: ₹{totalBOMCost.toFixed(2)}</h2>
             </div>
             <div className="p-6">
-              {/* Finished Goods Section in BOM Cost */}
               <div className="mb-6">
                 <h3 className="font-semibold text-gray-700 mb-4">Finished Goods</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM ID</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM NAME</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM CATEGORY</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">QUANTITY</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">UNIT</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">COST ALLOCATION (%)</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">PRICE/UNIT</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">TOTAL PRICE</th>
+                        {["ITEM ID", "ITEM NAME", "ITEM CATEGORY", "QUANTITY", "UNIT", "COST ALLOCATION (%)", "PRICE/UNIT", "TOTAL PRICE"].map(h => (
+                          <th key={h} className="px-4 py-3 text-left font-medium text-gray-700 border">{h}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -856,21 +794,15 @@ const BOMDetails: React.FC = () => {
                 </div>
               </div>
 
-              {/* Raw Materials Section in BOM Cost */}
               <div className="mb-6">
                 <h3 className="font-semibold text-gray-700 mb-4">Raw Materials</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM ID</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM NAME</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM CATEGORY</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">QUANTITY</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">UNIT</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">COST ALLOCATION (%)</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">PRICE/UNIT</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">TOTAL PRICE</th>
+                        {["ITEM ID", "ITEM NAME", "ITEM CATEGORY", "QUANTITY", "UNIT", "COST ALLOCATION (%)", "PRICE/UNIT", "TOTAL PRICE"].map(h => (
+                          <th key={h} className="px-4 py-3 text-left font-medium text-gray-700 border">{h}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -897,17 +829,15 @@ const BOMDetails: React.FC = () => {
                 </div>
               </div>
 
-              {/* Other Charges Section */}
               <div className="mb-6">
                 <h3 className="font-semibold text-gray-700 mb-4">Other Charges</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">#</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">CLASSIFICATION</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">AMOUNT</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-700 border">COMMENT</th>
+                        {["#", "CLASSIFICATION", "AMOUNT", "COMMENT"].map(h => (
+                          <th key={h} className="px-4 py-3 text-left font-medium text-gray-700 border">{h}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -950,14 +880,9 @@ const BOMDetails: React.FC = () => {
                 <table className="w-full text-sm border">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM ID</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM NAME</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM CATEGORY</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">QUANTITY</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">UNIT</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">COST ALLOCATION (%)</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">PRICE/UNIT</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">TOTAL PRICE</th>
+                      {["ITEM ID", "ITEM NAME", "ITEM CATEGORY", "QUANTITY", "UNIT", "COST ALLOCATION (%)", "PRICE/UNIT", "TOTAL PRICE"].map(h => (
+                        <th key={h} className="px-4 py-3 text-left font-medium text-gray-700 border">{h}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
@@ -977,14 +902,12 @@ const BOMDetails: React.FC = () => {
                 </table>
               </div>
             ) : (
-              <div className="text-center py-8 text-gray-500">
-                No finished goods data available
-              </div>
+              <div className="text-center py-8 text-gray-500">No finished goods data available</div>
             )}
           </div>
         </div>
 
-        {/* Raw Materials Section */}
+        {/* ── Raw Materials Section — with Child BOM support ── */}
         <div className="bg-white rounded-lg shadow-sm border mb-6">
           <div className="px-6 py-4 border-b">
             <h2 className="text-lg font-semibold">Raw Materials</h2>
@@ -994,6 +917,7 @@ const BOMDetails: React.FC = () => {
               <table className="w-full text-sm border">
                 <thead className="bg-gray-50">
                   <tr>
+                    <th className="px-4 py-3 text-left font-medium text-gray-700 border w-12">#</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM ID</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM NAME</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM CATEGORY</th>
@@ -1006,26 +930,105 @@ const BOMDetails: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {rawMaterials.map((material, index) => (
-                    <tr key={material.id} className="border-t hover:bg-gray-50">
-                      <td className="px-4 py-3 border font-medium">{material.code}</td>
-                      <td className="px-4 py-3 border">{material.name}</td>
-                      <td className="px-4 py-3 border">{material.category}</td>
-                      <td className="px-4 py-3 border text-right">{material.quantity}</td>
-                      <td className="px-4 py-3 border">{material.unit}</td>
-                      <td className="px-4 py-3 border text-right">{material.costAllocation}%</td>
-                      <td className="px-4 py-3 border text-right">₹{material.pricePerUnit.toFixed(2)}</td>
-                      <td className="px-4 py-3 border text-right">₹{material.totalPrice.toFixed(2)}</td>
-                      <td className="px-4 py-3 border">
-                        <Input 
-                          value={material.comment}
-                          onChange={(e) => handleMaterialCommentChange(index, e.target.value)}
-                          className="border-0 focus-visible:ring-0 shadow-none text-sm"
-                          placeholder="-"
-                        />
-                      </td>
-                    </tr>
-                  ))}
+                  {rawMaterials.map((material, index) => {
+                    const childExpanded = childBOMExpandedSet.has(index);
+                    return (
+                      <React.Fragment key={material.id}>
+                        {/* Parent RM row */}
+                        <tr className="border-t hover:bg-gray-50">
+                          {/* # with expand/collapse toggle when child BOM exists */}
+                          <td className="px-4 py-3 border w-12">
+                            {material.childBOM ? (
+                              <button
+                                onClick={() => toggleChildBOMExpanded(index)}
+                                className="flex items-center gap-1"
+                                title={childExpanded ? "Collapse child BOM" : "Expand child BOM"}
+                              >
+                                <div className="w-5 h-5 rounded flex items-center justify-center bg-[#105076] text-white shrink-0">
+                                  {childExpanded
+                                    ? <ChevronUp className="h-3 w-3" />
+                                    : <ChevronDown className="h-3 w-3" />}
+                                </div>
+                                <span className="text-xs font-semibold text-gray-700">{index + 1}</span>
+                              </button>
+                            ) : (
+                              <span className="text-xs text-gray-500">{index + 1}</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 border font-medium">{material.code}</td>
+                          <td className="px-4 py-3 border">{material.name}</td>
+                          <td className="px-4 py-3 border">{material.category}</td>
+                          <td className="px-4 py-3 border text-right">{material.quantity}</td>
+                          <td className="px-4 py-3 border">{material.unit}</td>
+                          <td className="px-4 py-3 border text-right">{material.costAllocation}%</td>
+                          <td className="px-4 py-3 border text-right">₹{material.pricePerUnit.toFixed(2)}</td>
+                          <td className="px-4 py-3 border text-right">₹{material.totalPrice.toFixed(2)}</td>
+                          <td className="px-4 py-3 border">
+                            <Input
+                              value={material.comment}
+                              onChange={(e) => handleMaterialCommentChange(index, e.target.value)}
+                              className="border-0 focus-visible:ring-0 shadow-none text-sm"
+                              placeholder="-"
+                            />
+                          </td>
+                        </tr>
+
+                        {/* Child BOM badge row — shown when expanded */}
+                        {material.childBOM && childExpanded && (
+                          <tr className="border-t bg-blue-50">
+                            <td colSpan={10} className="px-4 py-2">
+                              <div className="flex items-center gap-2">
+                                <Link2 className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                                <span className="text-xs font-semibold text-blue-700">Child BOM:</span>
+                                <span className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded font-medium">
+                                  {material.childBOM.bomNumber}
+                                </span>
+                                <span className="text-xs text-blue-600">{material.childBOM.bomName}</span>
+                                <button
+                                  onClick={() => window.open(`/production/bom/${material.childBOM!.bomId}`, "_blank")}
+                                  className="ml-auto flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 px-2 py-0.5 rounded hover:bg-blue-100"
+                                  title="Open child BOM"
+                                >
+                                  <ExternalLink className="h-3 w-3" /> View BOM
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+
+                        {/* Child BOM RM sub-rows */}
+                        {material.childBOM && childExpanded && material.childBOM.rawMaterials.map((subRM, j) => (
+                          <tr key={`${material.id}-child-${j}`} className="border-t bg-[#f0f7ff] hover:bg-blue-50/80">
+                            {/* Sub-number: e.g. 1.1, 1.2 */}
+                            <td className="px-4 py-2.5 border w-12">
+                              <div className="flex items-center justify-center">
+                                <span
+                                  className="text-xs font-semibold text-white px-1.5 py-0.5 rounded min-w-[28px] text-center"
+                                  style={{ backgroundColor: "#e8936a" }}
+                                >
+                                  {index + 1}.{j + 1}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-2.5 border">
+                              <span className="text-xs font-medium text-blue-700">{subRM.sku}</span>
+                            </td>
+                            <td className="px-4 py-2.5 border">
+                              <span className="text-xs text-blue-600">{subRM.name}</span>
+                            </td>
+                            <td className="px-4 py-2.5 border text-xs text-gray-500">{subRM.category}</td>
+                            <td className="px-4 py-2.5 border text-right text-xs font-medium">{subRM.quantity}</td>
+                            <td className="px-4 py-2.5 border text-xs text-gray-600">{subRM.unit}</td>
+                            {/* Cost allocation, price/unit, total price — not available for child RM rows */}
+                            <td className="px-4 py-2.5 border text-xs text-gray-400">-</td>
+                            <td className="px-4 py-2.5 border text-xs text-gray-400">-</td>
+                            <td className="px-4 py-2.5 border text-xs text-gray-400">-</td>
+                            <td className="px-4 py-2.5 border text-xs text-gray-500">{subRM.comment}</td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1043,15 +1046,9 @@ const BOMDetails: React.FC = () => {
                 <table className="w-full text-sm border">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM ID</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM NAME</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">ITEM CATEGORY</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">QUANTITY</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">UNIT</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">COST ALLOCATION (%)</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">PRICE/UNIT</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">TOTAL PRICE</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-700 border">COMMENT</th>
+                      {["ITEM ID", "ITEM NAME", "ITEM CATEGORY", "QUANTITY", "UNIT", "COST ALLOCATION (%)", "PRICE/UNIT", "TOTAL PRICE", "COMMENT"].map(h => (
+                        <th key={h} className="px-4 py-3 text-left font-medium text-gray-700 border">{h}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
@@ -1066,7 +1063,7 @@ const BOMDetails: React.FC = () => {
                         <td className="px-4 py-3 border text-right">₹{scrap.pricePerUnit.toFixed(2)}</td>
                         <td className="px-4 py-3 border text-right">₹{scrap.totalPrice.toFixed(2)}</td>
                         <td className="px-4 py-3 border">
-                          <Input 
+                          <Input
                             value={scrap.comment}
                             onChange={(e) => handleScrapCommentChange(index, e.target.value)}
                             className="border-0 focus-visible:ring-0 shadow-none text-sm"
@@ -1079,9 +1076,7 @@ const BOMDetails: React.FC = () => {
                 </table>
               </div>
             ) : (
-              <div className="text-center py-8 text-gray-500">
-                No scrap materials available
-              </div>
+              <div className="text-center py-8 text-gray-500">No scrap materials available</div>
             )}
           </div>
         </div>
@@ -1100,9 +1095,7 @@ const BOMDetails: React.FC = () => {
                 </div>
               ))
             ) : (
-              <div className="text-center py-8 text-gray-500">
-                No routing information available
-              </div>
+              <div className="text-center py-8 text-gray-500">No routing information available</div>
             )}
           </div>
         </div>
@@ -1117,10 +1110,9 @@ const BOMDetails: React.FC = () => {
               <table className="w-full text-sm border">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left font-medium text-gray-700 border">#</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-700 border">CLASSIFICATION</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-700 border">AMOUNT</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-700 border">COMMENT</th>
+                    {["#", "CLASSIFICATION", "AMOUNT", "COMMENT"].map(h => (
+                      <th key={h} className="px-4 py-3 text-left font-medium text-gray-700 border">{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -1138,39 +1130,24 @@ const BOMDetails: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Delete Modal */}
       {showDeleteModal && (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-    <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
-      <h3 className="text-lg font-semibold text-gray-900">
-        Delete BOM {bomDetails.bomId}?
-      </h3>
-
-      <p className="text-sm text-gray-600 mt-2">
-        This action cannot be undone. If this BOM is used in another document,
-        deletion will not be allowed.
-      </p>
-
-      <div className="mt-6 flex justify-end gap-3">
-        <Button
-          variant="outline"
-          onClick={() => setShowDeleteModal(false)}
-          disabled={deleting}
-        >
-          Cancel
-        </Button>
-
-        <Button
-          className="bg-red-600 hover:bg-red-700 text-white"
-          onClick={handleDeleteBOM}
-          disabled={deleting}
-        >
-          {deleting ? "Deleting..." : "Delete"}
-        </Button>
-      </div>
-    </div>
-  </div>
-)}
-
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <h3 className="text-lg font-semibold text-gray-900">Delete BOM {bomDetails.bomId}?</h3>
+            <p className="text-sm text-gray-600 mt-2">
+              This action cannot be undone. If this BOM is used in another document, deletion will not be allowed.
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <Button variant="outline" onClick={() => setShowDeleteModal(false)} disabled={deleting}>Cancel</Button>
+              <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleDeleteBOM} disabled={deleting}>
+                {deleting ? "Deleting..." : "Delete"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

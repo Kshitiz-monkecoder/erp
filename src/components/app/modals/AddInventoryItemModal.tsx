@@ -192,13 +192,13 @@ const AddInventoryItemModal: React.FC<IAddInventoryItemModal> = ({
   // ── Weighted Average Price ──────────────────────────────────────────────────
   const [currentStock, setCurrentStock] = useState<string>("");
   const [defaultPrice, setDefaultPrice] = useState<string>("");
-  const weightedAvgPrice =
-    currentStock && defaultPrice && Number(currentStock) > 0
-      ? (
-          (Number(currentStock) * Number(defaultPrice)) /
-          Number(currentStock)
-        ).toFixed(2)
-      : "0.00";
+  // const weightedAvgPrice =
+  //   currentStock && defaultPrice && Number(currentStock) > 0
+  //     ? (
+  //         (Number(currentStock) * Number(defaultPrice)) /
+  //         Number(currentStock)
+  //       ).toFixed(2)
+  //     : "0.00";
 
   // ── Specifications ──────────────────────────────────────────────────────────
   const [dimensions, setDimensions] = useState({ length: "", width: "", height: "" });
