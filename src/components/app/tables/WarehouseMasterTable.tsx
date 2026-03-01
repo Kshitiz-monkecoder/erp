@@ -118,13 +118,12 @@ interface ZoneModalProps {
 
 const ZoneModal: React.FC<ZoneModalProps> = ({ isOpen, onClose, warehouseId, warehouseName, zone, onSuccess }) => {
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<{ name?: string }>({});
 
   useEffect(() => {
-    if (isOpen) { setName(zone?.name ?? ""); setCode(zone?.code ?? ""); setDescription(zone?.description ?? ""); setErrors({}); }
+    if (isOpen) { setName(zone?.name ?? ""); setDescription(zone?.description ?? ""); setErrors({}); }
   }, [isOpen, zone]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -133,10 +132,10 @@ const ZoneModal: React.FC<ZoneModalProps> = ({ isOpen, onClose, warehouseId, war
     setIsLoading(true);
     try {
       if (zone?.id) {
-        await zoneAPI.updateZone(zone.id, { name: name.trim(), code: code.trim(), description: description.trim() });
+        await zoneAPI.updateZone(zone.id, { name: name.trim(), description: description.trim() });
         SuccessToast({ title: "Zone updated successfully.", description: "" });
       } else {
-        await zoneAPI.createZone({ warehouseId, name: name.trim(), code: code.trim(), description: description.trim() });
+        await zoneAPI.createZone({ warehouseId, name: name.trim(), description: description.trim() });
         SuccessToast({ title: "Zone added successfully.", description: "" });
       }
       onSuccess(); onClose();
@@ -152,10 +151,6 @@ const ZoneModal: React.FC<ZoneModalProps> = ({ isOpen, onClose, warehouseId, war
           <Label className={labelClasses}>Zone Name <span className="text-[#F53D6B]">*</span></Label>
           <Input className={`${inputClasses} border ${errors.name ? "border-red-400" : "border-neutral-200"}`} placeholder="e.g. Raw Material Zone" value={name} onChange={(e) => { setName(e.target.value); setErrors({}); }} disabled={isLoading} />
           {errors.name && <p className="text-red-500 text-xs">{errors.name}</p>}
-        </div>
-        <div className="space-y-1">
-          <Label className={labelClasses}>Zone Code</Label>
-          <Input className={`${inputClasses} border border-neutral-200`} placeholder="e.g. RMZ-01" value={code} onChange={(e) => setCode(e.target.value)} disabled={isLoading} />
         </div>
         <div className="space-y-1">
           <Label className={labelClasses}>Description</Label>
@@ -184,14 +179,13 @@ interface RackModalProps {
 
 const RackModal: React.FC<RackModalProps> = ({ isOpen, onClose, zoneId, zoneName, rack, onSuccess }) => {
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
   const [capacity, setCapacity] = useState("");
   const [description, setDescription] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<{ name?: string }>({});
 
   useEffect(() => {
-    if (isOpen) { setName(rack?.name ?? ""); setCode(rack?.code ?? ""); setCapacity(rack?.capacity?.toString() ?? ""); setDescription(rack?.description ?? ""); setErrors({}); }
+    if (isOpen) { setName(rack?.name ?? ""); setCapacity(rack?.capacity?.toString() ?? ""); setDescription(rack?.description ?? ""); setErrors({}); }
   }, [isOpen, rack]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -200,10 +194,10 @@ const RackModal: React.FC<RackModalProps> = ({ isOpen, onClose, zoneId, zoneName
     setIsLoading(true);
     try {
       if (rack?.id) {
-        await rackAPI.updateRack(rack.id, { name: name.trim(), code: code.trim(), capacity: capacity ? Number(capacity) : undefined, description: description.trim() });
+        await rackAPI.updateRack(rack.id, { name: name.trim(), capacity: capacity ? Number(capacity) : undefined, description: description.trim() });
         SuccessToast({ title: "Rack updated successfully.", description: "" });
       } else {
-        await rackAPI.createRack({ zoneId, name: name.trim(), code: code.trim(), capacity: capacity ? Number(capacity) : undefined, description: description.trim() });
+        await rackAPI.createRack({ zoneId, name: name.trim(), capacity: capacity ? Number(capacity) : undefined, description: description.trim() });
         SuccessToast({ title: "Rack added successfully.", description: "" });
       }
       onSuccess(); onClose();
@@ -220,15 +214,9 @@ const RackModal: React.FC<RackModalProps> = ({ isOpen, onClose, zoneId, zoneName
           <Input className={`${inputClasses} border ${errors.name ? "border-red-400" : "border-neutral-200"}`} placeholder="e.g. Rack A1" value={name} onChange={(e) => { setName(e.target.value); setErrors({}); }} disabled={isLoading} />
           {errors.name && <p className="text-red-500 text-xs">{errors.name}</p>}
         </div>
-        <div className="flex gap-2">
-          <div className="flex-1 space-y-1">
-            <Label className={labelClasses}>Rack Code</Label>
-            <Input className={`${inputClasses} border border-neutral-200`} placeholder="e.g. B3-04" value={code} onChange={(e) => setCode(e.target.value)} disabled={isLoading} />
-          </div>
-          <div className="w-28 space-y-1">
-            <Label className={labelClasses}>Capacity</Label>
-            <Input type="number" min="0" className={`${inputClasses} border border-neutral-200`} placeholder="Units" value={capacity} onChange={(e) => setCapacity(e.target.value)} disabled={isLoading} />
-          </div>
+        <div className="space-y-1">
+          <Label className={labelClasses}>Capacity</Label>
+          <Input type="number" min="0" className={`${inputClasses} border border-neutral-200`} placeholder="Units" value={capacity} onChange={(e) => setCapacity(e.target.value)} disabled={isLoading} />
         </div>
         <div className="space-y-1">
           <Label className={labelClasses}>Description</Label>
@@ -357,9 +345,6 @@ const ZoneCard: React.FC<ZoneCardProps> = ({ zone, onZoneEdit, onZoneDelete, onR
                         </button>
                       </div>
                     </div>
-                    {rack.code && (
-                      <span className="text-xs font-mono text-gray-400">{rack.code}</span>
-                    )}
                     {rack.capacity != null && (
                       <div className="flex items-center gap-1 mt-0.5">
                         <Package className="w-2.5 h-2.5 text-gray-300" />

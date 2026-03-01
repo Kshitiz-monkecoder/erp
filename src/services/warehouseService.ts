@@ -38,27 +38,23 @@ export interface WarehouseHierarchy extends WarehouseItem {
 export interface CreateZoneRequest {
   warehouseId: number;
   name: string;
-  code?: string;
   description?: string;
 }
 
 export interface UpdateZoneRequest {
   name?: string;
-  code?: string;
   description?: string;
 }
 
 export interface CreateRackRequest {
   zoneId: number;
   name: string;
-  code?: string;
   description?: string;
   capacity?: number;
 }
 
 export interface UpdateRackRequest {
   name?: string;
-  code?: string;
   description?: string;
   capacity?: number;
 }
