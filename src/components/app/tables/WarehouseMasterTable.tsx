@@ -50,7 +50,7 @@ import {
 } from "../../../services/warehouseService";
 
 interface WarehouseMasterTableProps extends Omit<IModalProps, "isOpen"> {
-  toggleEditWarehouseModal?: (w: WarehouseItem) => void;
+  toggleEditWarehouseModal?: (w: any) => void;
   refreshTrigger?: number;
 }
 
