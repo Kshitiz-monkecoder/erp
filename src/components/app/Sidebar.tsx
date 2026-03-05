@@ -9,6 +9,8 @@ import {
   BuyersAndSuppliersSubLinks,
   ProductionSubLinks,
   settingSubLinks,
+  ReportsSubLinks,
+  ResourcePlanningSubLinks
 } from "@/lib/subnavLinks";
 import { get } from "../../lib/apiService";
 import { usePermissions } from "../../contexts/PermissionContext";
@@ -85,6 +87,21 @@ const Sidebar: React.FC<SidebarProps> = ({
       link: "/addresses",
       module: "Buyers and Suppliers", // Addresses is part of Buyers and Suppliers module
     },
+    
+    {
+  icon: "/sidebar/reports.svg",
+  name: "Reports & Intelligence",
+  nestedLinks: ReportsSubLinks,
+  link: "/reports",
+  module: "Buyers and Suppliers",    // Using Buyers and Suppliers module for now since we don't have a separate Reports module in permissions. Adjust as needed when implementing permissions for Reports.
+},
+{
+  icon: "/sidebar/resource-planning.svg",
+  name: "Resource Planning",
+  nestedLinks: ResourcePlanningSubLinks,
+  link: "/resource-planning",
+  module: "Buyers and Suppliers",
+},
     {
       icon: "/sidebar/settings.svg",
       name: "Settings",

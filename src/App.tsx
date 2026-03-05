@@ -48,6 +48,12 @@ import CreateProductionOrder from "./components/app/tables/production/create-pro
 import EditBOM from "./pages/bom-edit";
 import ProcessDetails from "./pages/ProcessDeatils";
 import UserManagement from "./pages/setting/UserManagement";
+import SalesReport from "./pages/reports/SalesReport";
+import PurchaseReport from "./pages/reports/PurchaseReport";
+import InventoryReport from "./pages/reports/InventoryReport";
+import ProductionReport from "./pages/reports/ProductionReport";
+import AccountsReport from "./pages/reports/AccountsReport";
+import FinancialReport from "./pages/reports/FinancialReport";
 import Teams from "./pages/setting/TeamPage"; 
 import JoinTeamPage from "./pages/auth/JoinTeamPage";
 import MyPermissionsPage from "./components/app/modals/MyPermissions";
@@ -55,6 +61,8 @@ import Unauthorized from "./pages/unauthorized";
 import { AuthProvider } from "./contexts/AuthContext";
 import { PermissionProvider } from "./contexts/PermissionContext";
 import ModuleRouteGuard from "./components/auth/ModuleRouteGuard";
+import Reports from "./pages/reports/page";
+import ResourcePlanning from "./pages/reports/resource-planning/ResourcePlanning";
 
 const App: React.FC = () => {
   return (
@@ -194,6 +202,16 @@ const App: React.FC = () => {
                   path="production/create-order"
                   element={<CreateProductionOrder />}
                 />
+
+                {/* Reports module routes */  }
+  {/* Query tab version */}
+  <Route path="/reports" element={<Reports />} />
+
+  {/* Dynamic route version */}
+  <Route path="/reports/:id" element={<Reports />} />
+
+              <Route path="/resource-planning" element={<ResourcePlanning />} />
+              <Route path="/resource-planning/:id" element={<ResourcePlanning />} />
 
                 {/* Settings module routes */}
                 <Route path="settings/users" element={<UserManagement />} />

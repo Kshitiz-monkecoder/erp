@@ -124,3 +124,40 @@ export const settingSubLinks : INavlinks[] = [
     link: "/settings/my-permissions?tab=my-permissions"
   }
 ]
+export const ReportsSubLinks: INavlinks[] = [
+  {
+    name: "Sales",
+    link: "/reports?tab=sales",
+  },
+  {
+    name: "Purchase",
+    link: "/reports?tab=purchase",
+  },
+  {
+    name: "Inventory",
+    link: "/reports?tab=inventory",
+  },
+  {
+    name: "Production",
+    link: "/reports?tab=production",
+  },
+  {
+    name: "Accounts",
+    link: "/reports?tab=accounts",
+  },
+  {
+    name: "General Financial Reporting",
+    link: "/reports?tab=financial",
+  },
+];
+
+export const ResourcePlanningSubLinks: INavlinks[] = [
+  {
+    name: "Indent",
+    link: "/resource-planning?tab=indent",
+  },
+  {
+    name: "Request For Quotation",
+    link: "/resource-planning?tab=request-for-quotation",
+  },
+];

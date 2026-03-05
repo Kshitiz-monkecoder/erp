@@ -131,13 +131,21 @@ const Navbar: React.FC<NavbarProps> = ({ isLargeScreen, setIsLargeScreen }) => {
       );
     }
     
-    if (location.pathname.includes("production")) {
-      return (
-        <div className="flex items-center gap-2" onClick={() => navigateTo(-1)}>
-          Production
-        </div>
-      );
-    }
+    const firstSegment = location.pathname.split("/")[1];
+
+switch (firstSegment) {
+  case "production":
+    return <div onClick={() => navigateTo(-1)}>Production</div>;
+
+  case "reports":
+    return <div onClick={() => navigateTo(-1)}>Reports & Intelligence</div>;
+
+  case "resource-planning":
+    return <div onClick={() => navigateTo(-1)}>Resource Planning</div>;
+
+  default:
+    return null;
+}
     
     // Default empty
     return "";
@@ -154,7 +162,7 @@ const Navbar: React.FC<NavbarProps> = ({ isLargeScreen, setIsLargeScreen }) => {
         setIsOpen={setIsOpen}
         isLargeScreen={isLargeScreen}
       />
-      <div className="flex text-sm md:text-base items-center justify-between w-full py-3 ml-8 pr-8">
+      <div className="flex text-sm md:text-base items-center justify-between w-full py-3 px-6">
         <div className="font-bold">
           {getPageTitle()}
         </div>

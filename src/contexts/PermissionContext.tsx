@@ -21,6 +21,7 @@ interface TeamPermissions {
   "Sales & Purchase": Permission;
   "Teams Management": Permission;
   "Buyers and Suppliers": Permission;
+  "Reports": Permission;
 }
 
 interface PermissionContextType {
