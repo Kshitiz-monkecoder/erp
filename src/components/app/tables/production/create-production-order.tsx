@@ -148,6 +148,7 @@ const CreateProductionOrder: React.FC = () => {
 
   const [rowBoms, setRowBoms] = useState<Record<number, BOMItem[]>>({});
   const [rowLoadingBOMs, setRowLoadingBOMs] = useState<Record<number, boolean>>({});
+  const [rowBomsLoaded, setRowBomsLoaded] = useState<Record<number, boolean>>({});
 
   // Only 1 row — no add row button
   const [productionItems, setProductionItems] = useState<ProductionOrderItem[]>(() => {
@@ -254,6 +255,7 @@ const CreateProductionOrder: React.FC = () => {
       setRowBoms(prev => ({ ...prev, [rowIndex]: [] }));
     } finally {
       setRowLoadingBOMs(prev => ({ ...prev, [rowIndex]: false }));
+      setRowBomsLoaded(prev => ({ ...prev, [rowIndex]: true }));
     }
   };
 
@@ -321,6 +323,7 @@ const CreateProductionOrder: React.FC = () => {
     };
 
     setProductionItems(updated);
+    setRowBomsLoaded(prev => ({ ...prev, [index]: false }));
     await fetchBOMsForItem(selected.id, index);
   };
 
@@ -476,7 +479,7 @@ const CreateProductionOrder: React.FC = () => {
           </SelectValue>
         </SelectTrigger>
 
-        <SelectContent>
+        <SelectContent onKeyDown={(e) => e.stopPropagation()}>
           <div className="sticky top-0 bg-white p-2 border-b">
             <div className="relative">
               <Search className="absolute left-2 top-2 h-4 w-4 text-gray-400" />
@@ -486,6 +489,7 @@ const CreateProductionOrder: React.FC = () => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
               />
             </div>
           </div>
@@ -523,19 +527,17 @@ const CreateProductionOrder: React.FC = () => {
   }) => {
     const rowSpecificBoms = rowBoms[rowIndex] || [];
     const hasItemSelected = !!productionItems[rowIndex]?.itemId;
+    const isLoaded = rowBomsLoaded[rowIndex] || false;
 
-    const effectiveList =
-      rowSpecificBoms.length > 0
-        ? rowSpecificBoms.filter(
-            (bom) =>
-              bom.docNumber
-                .toLowerCase()
-                .includes(searchBomQuery.toLowerCase()) ||
-              bom.docName
-                .toLowerCase()
-                .includes(searchBomQuery.toLowerCase())
-          )
-        : filteredBoms;
+    // If the item-specific fetch completed, use those results (even if empty).
+    // Only fall back to all BOMs if the fetch hasn't run yet.
+    const effectiveList = isLoaded
+      ? rowSpecificBoms.filter(
+          (bom) =>
+            bom.docNumber.toLowerCase().includes(searchBomQuery.toLowerCase()) ||
+            bom.docName.toLowerCase().includes(searchBomQuery.toLowerCase())
+        )
+      : filteredBoms;
 
     const isRowLoading = rowLoadingBOMs[rowIndex] || false;
     const isLoading = isRowLoading || loadingBOMs;
@@ -546,7 +548,7 @@ const CreateProductionOrder: React.FC = () => {
           <SelectValue placeholder="Select BOM" />
         </SelectTrigger>
 
-        <SelectContent>
+        <SelectContent onKeyDown={(e) => e.stopPropagation()}>
           <div className="sticky top-0 bg-white p-2 border-b">
             <div className="relative">
               <Search className="absolute left-2 top-2 h-4 w-4 text-gray-400" />
@@ -556,6 +558,7 @@ const CreateProductionOrder: React.FC = () => {
                 value={searchBomQuery}
                 onChange={(e) => setSearchBomQuery(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
               />
             </div>
           </div>
@@ -569,7 +572,19 @@ const CreateProductionOrder: React.FC = () => {
               <Loader2 className="animate-spin h-5 w-5 mx-auto" />
             </div>
           ) : effectiveList.length === 0 ? (
-            <p className="text-center py-4 text-sm">No BOMs found</p>
+            <div className="flex flex-col items-center py-4 gap-2">
+              <p className="text-sm text-gray-500">No BOMs found for this item</p>
+              <button
+                className="flex items-center gap-1 text-sm font-medium text-[#105076] hover:underline"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navigate("/production/bom/create");
+                }}
+              >
+                + Create BOM
+              </button>
+            </div>
           ) : (
             effectiveList.map((bom) => (
               <SelectItem
@@ -595,7 +610,7 @@ const CreateProductionOrder: React.FC = () => {
         </Button>
         <div>
           <h2 className="text-2xl font-bold text-[#105076]">
-            Create Production Order
+            Create Production Order 
           </h2>
           <p className="text-sm text-gray-600 mt-1">
             Create production process for the selected item

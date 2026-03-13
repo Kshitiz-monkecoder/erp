@@ -214,7 +214,7 @@ const PurchaseTable: React.FC<Props> = (
         
         const data = await get("/inventory/purchase-order");
         setItems(
-          (data?.data || []).map((item: any) => ({
+          (data?.data?.list || data?.data || []).map((item: any) => ({
             ...item,
             companyName: item?.supplier?.companyName || "",
             transactionName: item?.title || "",

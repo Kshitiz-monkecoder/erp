@@ -1025,6 +1025,7 @@ const ProcessDetails: React.FC = () => {
           change_quantity: Number(row.quantity),
           comment: row.comment || "",
           change_type,
+          ...(row.barcodeId != null ? { barcodeId: Number(row.barcodeId) } : {}),
           selected_store: {
             name: row.store || processDetails.rmStore.name,
             id: String(processDetails.rmStore.id),
@@ -1078,7 +1079,7 @@ const ProcessDetails: React.FC = () => {
         fg_data, rm_data, scrap_data, other_charges_data, routing_data,
         mark_items_tested: Boolean(saveData.markTestedAndPassed),
       },
-      process_id: processId,
+      process_id: String(processId),
     };
 
     const hasChanges =
@@ -1128,8 +1129,13 @@ const ProcessDetails: React.FC = () => {
       }
 
       // ── Build and open StoreIssueApprovalDialog ──
+      // For FG Produced: only open approval if markTestedAndPassed is true.
+      // If not marked tested, quantities go to FG Testing — no approval popup yet.
+      const skipApproval =
+        takeActionsSection === "markFGProduced" && !saveData.markTestedAndPassed;
+
       const { rows, docType, docAction } = buildApprovalRows(takeActionsSection, saveData);
-      if (rows.length > 0) {
+      if (rows.length > 0 && !skipApproval) {
         const now    = new Date();
         const nowStr = `${now.toLocaleDateString("en-GB")} - ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
         setApprovalMeta({
@@ -1184,7 +1190,6 @@ const ProcessDetails: React.FC = () => {
 
     try {
       const refreshRaw = await productionAPI.getProductionById(parseInt(processId));
-      // ── FIX: normalise here too ──
       const refreshRes = normaliseResponse(refreshRaw);
       const d = refreshRes?.data ?? refreshRes;
 
@@ -1202,7 +1207,50 @@ const ProcessDetails: React.FC = () => {
     } catch (e) {
       console.error("Failed to refresh process after FG test:", e);
     }
-  }, [processId, items, getStageFromStatus, formatDate]);
+
+    // ── Open StoreIssueApprovalDialog for FG Testing (same as FG Produced) ──
+    const testedRows = data
+      .filter((fg) => (fg.passed ?? 0) > 0)
+      .map((fg, i) => ({
+        seq: i + 1,
+        itemId: String(fg.fgId),
+        description: fg.fgName,
+        productCategory: "Semi-finished Goods",
+        action: "Add to Store",
+        fromStore: "—",
+        toStore: processDetails.fgStore.name || "FG Store",
+        documentQuantity: Number(fg.passed ?? 0),
+        approvedQuantity: Number(fg.passed ?? 0),
+        unit: "Nos",
+        baseQuantity: Number(fg.passed ?? 0),
+        baseUnit: "Nos",
+        currentStock: 0,
+        comment: fg.comment || "",
+        rawItemId: String(fg.fgId),
+      }));
+
+    if (testedRows.length > 0) {
+      const now    = new Date();
+      const nowStr = `${now.toLocaleDateString("en-GB")} - ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+      setApprovalMeta({
+        documentType:   "Process FG Testing",
+        documentAction: "Document Created",
+        createdBy:      processDetails.createdBy,
+        approvedBy:     processDetails.createdBy,
+        comment:        "",
+        documentNumber: processDetails.processNumber,
+        noOfItems:      testedRows.length,
+        creationDate:   nowStr,
+        approvalDate:   nowStr,
+        referenceId:    "",
+        sourceType:     "FG",
+        productionId:   parseInt(processId),
+        fgStoreId:      processDetails.fgStore.id,
+      });
+      setApprovalRows(testedRows);
+      setApprovalOpen(true);
+    }
+  }, [processId, items, processDetails, getStageFromStatus, formatDate]);
 
   // ── Level callbacks ──
   const updateLevel = useCallback((i: number, u: ProcessLevelData) => {

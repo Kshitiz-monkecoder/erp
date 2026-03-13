@@ -68,6 +68,12 @@ export interface RawMaterialRequest {
   comment?: string;
   hasAlternate?: boolean;
   alternateList?: AlternateItemRequest[];
+  /**
+   * Child BOM linked to this specific raw material row.
+   * Pass null to explicitly unlink an existing child BOM.
+   * Omit (undefined) when no change is intended.
+   */
+  subBomId?: number | null;
 }
 
 export interface RoutingRequest {
@@ -90,8 +96,12 @@ export interface OtherChargeRequest {
 }
 
 export interface BOMItemRequest {
+  /**
+   * Required for UPDATE (PUT) — the existing bomItem row ID.
+   * Omit for CREATE (POST).
+   */
+  id?: number;
   finishedGoods: FinishedGoodRequest;
-  subBomId?: number;           // ← Child BOM link
   rawMaterials?: RawMaterialRequest[];
   routing?: RoutingRequest[];
   scrap?: ScrapRequest[];
@@ -106,7 +116,7 @@ export interface BOMCreateRequest {
   rmStoreId: number;
   fgStoreId: number;
   scrapStoreId: number;
-  status: 'draft' | 'published';
+  status: 'planned' | 'published' | 'wip' | 'completed';
   docComment?: string;
   bomItems: BOMItemRequest[];
 }
@@ -137,8 +147,8 @@ export interface BOMResponse {
 export interface BOMItemResponse {
   id: number;
   finishedGoods: FinishedGoodRequest;
-  subBomId?: number;
-  rawMaterials: RawMaterialRequest[];
+  /** subBom is returned nested per raw material row in GET responses */
+  rawMaterials: (RawMaterialRequest & { subBom?: any })[];
   routing: RoutingRequest[];
   scrap: ScrapRequest[];
   otherCharges: OtherChargeRequest[];
@@ -156,7 +166,7 @@ export interface APIResponse<T> {
 // ─────────────────────────────────────────────
 
 export const bomAPI = {
-  /** Create a new BOM (draft or published) */
+  /** Create a new BOM (defaults to planned status) */
   createBOM: async (data: BOMCreateRequest): Promise<APIResponse<BOMResponse>> => {
     return await post('/production/bom', data);
   },

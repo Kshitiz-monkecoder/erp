@@ -93,7 +93,13 @@ const BillOfMaterialTable: React.FC = () => {
         const numberOfRm = firstItem?.rawMaterials?.length ?? 0;
 
         const updatedAtIso = b.updatedAt || b.docDate || new Date().toISOString();
-        const updatedAtLabel = new Date(updatedAtIso).toLocaleString();
+        const updatedAtLabel = new Date(updatedAtIso).toLocaleString(undefined, {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
 
         return {
           id: b.id,
@@ -149,11 +155,15 @@ const BillOfMaterialTable: React.FC = () => {
       cell: ({ row }) => (
         <div className="min-w-24">
           <span
-            className={`px-2 py-1 rounded-full text-xs ${
-              row.original.status === "published" ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
+            className={`px-2 py-1 rounded-full text-xs font-medium ${
+              row.original.status?.toUpperCase() === "PUBLISHED" ? "bg-green-100 text-green-700" :
+              row.original.status?.toUpperCase() === "WIP" ? "bg-blue-100 text-blue-700" :
+              row.original.status?.toUpperCase() === "COMPLETED" ? "bg-purple-100 text-purple-700" :
+              "bg-yellow-100 text-yellow-700"
             }`}
           >
-            {row.original.status}
+            {row.original.status?.toUpperCase() === "WIP" ? "WIP / In Progress" :
+             row.original.status ? row.original.status.charAt(0).toUpperCase() + row.original.status.slice(1).toLowerCase() : "—"}
           </span>
         </div>
       ),
@@ -227,8 +237,10 @@ const BillOfMaterialTable: React.FC = () => {
   // Status filter options
   const statusOptions: OptionType[] = [
     { label: "All", value: "all" },
-    { label: "Published", value: "published" },
-    { label: "Draft", value: "draft" },
+    { label: "Planned", value: "PLANNED" },
+    { label: "Published", value: "PUBLISHED" },
+    { label: "WIP / In Progress", value: "WIP" },
+    { label: "Completed", value: "COMPLETED" },
   ];
 
   const handleStatusFilter = (value: string) => {

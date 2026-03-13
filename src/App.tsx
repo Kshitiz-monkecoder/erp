@@ -176,11 +176,6 @@ const App: React.FC = () => {
                   element={<Production />}
                 />
                 
-                <Route
-                  path="production/bom/:id"
-                  element={<BOMDetails />}
-                />
-                
                 {/* Production sub-routes */}
                 <Route
                   path="production/bom"
@@ -191,8 +186,12 @@ const App: React.FC = () => {
                   element={<CreateBom />}
                 />
                 <Route
-                  path="/production/bom/edit/:id"
+                  path="production/bom/edit/:id"
                   element={<EditBOM />}
+                />
+                <Route
+                  path="production/bom/:id"
+                  element={<BOMDetails />}
                 />
                 <Route
                   path="/production/process-details"

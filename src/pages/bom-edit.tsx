@@ -42,7 +42,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { get } from "@/lib/apiService";
+import { get, post } from "@/lib/apiService";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -101,6 +101,7 @@ interface UIRawMaterial {
   comment: string;
   alternateItems: string;
   itemData?: Item;
+  /** Linked child BOM for this specific RM row. null = explicitly unlinked. */
   childBOM?: LinkedChildBOM | null;
 }
 
@@ -142,6 +143,11 @@ interface UIOtherCharge {
 }
 
 interface BOMLevelData {
+  /**
+   * The existing bomItem.id from the API — required for PUT requests.
+   * undefined for newly added levels (POST append).
+   */
+  bomItemId?: number;
   expanded: {
     bomSnapshot: boolean;
     finishedGoods: boolean;
@@ -191,6 +197,15 @@ const defaultOtherCharges = (): UIOtherCharge[] => [
   { classification: "Other Charges",       account: "Account", amount: 0, comment: "" },
 ];
 
+const defaultExpanded = () => ({
+  bomSnapshot: true,
+  finishedGoods: true,
+  rawMaterials: true,
+  routing: true,
+  scrap: true,
+  otherCharges: true,
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ItemSelect
 // ─────────────────────────────────────────────────────────────────────────────
@@ -200,20 +215,43 @@ const ItemSelect: React.FC<{
   items: Item[];
   placeholder?: string;
   disabled?: boolean;
-}> = ({ value, onValueChange, items, placeholder = "Select item", disabled = false }) => {
+  /** Shown when the item with `value` is not present in `items` (e.g. cross-category item) */
+  fallbackName?: string;
+  fallbackSku?: string;
+}> = ({ value, onValueChange, items, placeholder = "Select item", disabled = false, fallbackName, fallbackSku }) => {
   const [search, setSearch] = useState("");
-  const filtered = items.filter(
+
+  // Merge the existing item into the list if it isn't already there (cross-category items)
+  const allItems = React.useMemo(() => {
+    if (!value || !fallbackName) return items;
+    const alreadyPresent = items.some((i) => i.id === value);
+    if (alreadyPresent) return items;
+    // Inject a synthetic entry so the selected value renders and stays selectable
+    const synthetic: Item = {
+      id: value,
+      name: fallbackName,
+      sku: fallbackSku ?? value,
+      currentStock: "-",
+      defaultPrice: "0",
+      hsnCode: "",
+      minimumStockLevel: "0",
+      maximumStockLevel: "0",
+    };
+    return [synthetic, ...items];
+  }, [items, value, fallbackName, fallbackSku]);
+
+  const filtered = allItems.filter(
     (i) =>
       i.name.toLowerCase().includes(search.toLowerCase()) ||
       i.sku.toLowerCase().includes(search.toLowerCase())
   );
-  const selected = items.find((i) => i.id === value);
+  const selected = allItems.find((i) => i.id === value);
 
   return (
     <Select
       value={value}
       onValueChange={(val) => {
-        const item = items.find((i) => i.id === val);
+        const item = allItems.find((i) => i.id === val);
         onValueChange(val, item);
       }}
       disabled={disabled}
@@ -251,7 +289,7 @@ const ItemSelect: React.FC<{
               <div className="flex flex-col">
                 <span className="font-medium">{item.name}</span>
                 <span className="text-xs text-gray-500">
-                  SKU: {item.sku} | {item.category?.name ?? "N/A"} | Stock: {item.currentStock}
+                  SKU: {item.sku}{item.category?.name ? ` | ${item.category.name}` : ""}{item.currentStock !== "-" ? ` | Stock: ${item.currentStock}` : ""}
                 </span>
               </div>
             </SelectItem>
@@ -263,13 +301,14 @@ const ItemSelect: React.FC<{
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RawMaterialActionsMenu — identical to create page
+// RawMaterialActionsMenu
 // ─────────────────────────────────────────────────────────────────────────────
 const RawMaterialActionsMenu: React.FC<{
   onLinkChildBOM: () => void;
   onRemove: () => void;
   hasChildBOM: boolean;
-}> = ({ onLinkChildBOM, onRemove, hasChildBOM }) => {
+  hasItem: boolean;
+}> = ({ onLinkChildBOM, onRemove, hasChildBOM, hasItem }) => {
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -312,15 +351,22 @@ const RawMaterialActionsMenu: React.FC<{
           className="w-52 bg-white border border-gray-200 rounded-lg shadow-xl py-1"
         >
           <button
-            onClick={() => { setOpen(false); onLinkChildBOM(); }}
-            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-blue-50 text-left text-gray-700 transition-colors"
+            onClick={() => { if (!hasItem) return; setOpen(false); onLinkChildBOM(); }}
+            disabled={!hasItem}
+            title={!hasItem ? "Select an item first" : undefined}
+            className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left transition-colors ${
+              hasItem
+                ? "hover:bg-blue-50 text-gray-700 cursor-pointer"
+                : "text-gray-300 cursor-not-allowed"
+            }`}
           >
-            <Link2 className="h-4 w-4 text-blue-600 shrink-0" />
+            <Link2 className={`h-4 w-4 shrink-0 ${hasItem ? "text-blue-600" : "text-gray-300"}`} />
             <span className="flex-1">{hasChildBOM ? "Change Child Link" : "Link Child BOM"}</span>
-            {hasChildBOM && (
-              <span className="bg-green-100 text-green-700 text-xs px-1.5 py-0.5 rounded font-medium shrink-0">
-                Linked
-              </span>
+            {!hasItem && (
+              <span className="text-[10px] text-gray-400 shrink-0">Select item first</span>
+            )}
+            {hasItem && hasChildBOM && (
+              <span className="bg-green-100 text-green-700 text-xs px-1.5 py-0.5 rounded font-medium shrink-0">Linked</span>
             )}
           </button>
           <div className="border-t border-gray-100 my-0.5" />
@@ -338,17 +384,19 @@ const RawMaterialActionsMenu: React.FC<{
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LinkChildBOMDialog — identical to create page
+// LinkChildBOMDialog
 // ─────────────────────────────────────────────────────────────────────────────
 const LinkChildBOMDialog: React.FC<{
   open: boolean;
   onClose: () => void;
   onSave: (childBOM: LinkedChildBOM) => void;
   currentChildBOM?: LinkedChildBOM | null;
-}> = ({ open, onClose, onSave, currentChildBOM }) => {
+  itemId?: string;
+}> = ({ open, onClose, onSave, currentChildBOM, itemId }) => {
   const navigate = useNavigate();
   const [bomList, setBomList] = useState<APIBOMListItem[]>([]);
   const [loadingList, setLoadingList] = useState(false);
+  const [noBOMsFound, setNoBOMsFound] = useState(false);
   const [selectedBOMId, setSelectedBOMId] = useState<string>("");
   const [fgRows, setFgRows] = useState<ChildBOMFGRow[]>([]);
   const [rmRows, setRmRows] = useState<ChildBOMRMRow[]>([]);
@@ -362,17 +410,27 @@ const LinkChildBOMDialog: React.FC<{
       setRmRows(currentChildBOM?.rawMaterials ?? []);
       setIdSearch("");
       setNameSearch("");
+      setNoBOMsFound(false);
       fetchBOMList();
     }
   }, [open]);
 
   const fetchBOMList = async () => {
     setLoadingList(true);
+    setNoBOMsFound(false);
     try {
-      const res = await get("/production/bom?page=1&limit=100&status=published");
-      if (res?.status && Array.isArray(res.data)) setBomList(res.data as APIBOMListItem[]);
-      else setBomList([]);
-    } catch { setBomList([]); }
+      const url = itemId
+        ? `/production/bom/finished-goods-item/${itemId}`
+        : `/production/bom?page=1&limit=100&status=published`;
+      const res = await get(url);
+      if (res?.status && Array.isArray(res.data)) {
+        setBomList(res.data as APIBOMListItem[]);
+        setNoBOMsFound(res.data.length === 0);
+      } else {
+        setBomList([]);
+        setNoBOMsFound(true);
+      }
+    } catch { setBomList([]); setNoBOMsFound(true); }
     finally { setLoadingList(false); }
   };
 
@@ -514,8 +572,16 @@ const LinkChildBOMDialog: React.FC<{
                 <SelectContent className="z-[200]">
                   {loadingList
                     ? <div className="py-4 text-center"><Loader2 className="h-4 w-4 animate-spin mx-auto text-blue-500" /></div>
-                    : bomList.length === 0
-                    ? <div className="py-4 text-center text-gray-500 text-sm">No published BOMs found</div>
+                    : noBOMsFound
+                    ? <div className="py-4 px-3 text-center space-y-2">
+                        <p className="text-gray-500 text-sm">No BOMs found for this item</p>
+                        <button
+                          className="text-sm font-medium text-[#105076] hover:underline"
+                          onMouseDown={(e) => { e.preventDefault(); window.open("/production/bom/create", "_blank"); }}
+                        >
+                          + Create BOM
+                        </button>
+                      </div>
                     : bomList.map((bom) => <SelectItem key={bom.id} value={bom.id.toString()}>{bom.docNumber}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -531,7 +597,7 @@ const LinkChildBOMDialog: React.FC<{
         </div>
 
         <div className="flex items-center justify-between px-6 py-4 border-t bg-gray-50 sticky bottom-0">
-          <Button variant="outline" onClick={() => { onClose(); navigate("/production/bom/create"); }} className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide">
+          <Button variant="outline" onClick={() => window.open("/production/bom/create", "_blank")} className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide">
             <ExternalLink className="h-4 w-4" /> Create BOM
           </Button>
           <div className="flex gap-2">
@@ -653,29 +719,28 @@ const RoutingDialog: React.FC<{
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BOMLevel — full version with child BOM support (mirrors create page)
+// BOMLevel
 // ─────────────────────────────────────────────────────────────────────────────
 const BOMLevel: React.FC<{
   levelIndex: number;
   data: BOMLevelData;
-  items: Item[];
+  fgItems: Item[];
+  rmItems: Item[];
+  scrapItems2: Item[];
   onUpdate: (updated: BOMLevelData) => void;
   onDelete?: () => void;
-  childBOMDialogOpen: boolean;
-  childBOMTargetIdx: number | null;
   childBOMExpandedSet: Set<number>;
   onOpenChildBOM: (idx: number) => void;
   onToggleChildBOMExpanded: (idx: number) => void;
   onUnlinkChildBOM: (idx: number) => void;
 }> = ({
-  levelIndex, data, items, onUpdate, onDelete,
+  levelIndex, data, fgItems, rmItems, scrapItems2, onUpdate, onDelete,
   childBOMExpandedSet,
   onOpenChildBOM, onToggleChildBOMExpanded, onUnlinkChildBOM,
 }) => {
   const toggle = (s: keyof BOMLevelData["expanded"]) =>
     onUpdate({ ...data, expanded: { ...data.expanded, [s]: !data.expanded[s] } });
 
-  // ── FG handlers ──
   const addFG = () => onUpdate({ ...data, finishedGoods: [...data.finishedGoods, { itemId: "", name: "", category: "", quantity: 1, unit: "", costAllocation: 0, comment: "", alternateItems: "" }] });
   const removeFG = (i: number) => { if (data.finishedGoods.length > 1) onUpdate({ ...data, finishedGoods: data.finishedGoods.filter((_, j) => j !== i) }); };
   const updateFG = (i: number, field: keyof UIFinishedGood, val: any, itemData?: Item) => {
@@ -685,7 +750,6 @@ const BOMLevel: React.FC<{
     onUpdate({ ...data, finishedGoods: arr });
   };
 
-  // ── RM handlers ──
   const addRM = () => onUpdate({ ...data, rawMaterials: [...data.rawMaterials, { itemId: "", name: "", category: "", quantity: 1, unit: "", comment: "", alternateItems: "" }] });
   const removeRM = (i: number) => onUpdate({ ...data, rawMaterials: data.rawMaterials.filter((_, j) => j !== i) });
   const updateRM = (i: number, field: keyof UIRawMaterial, val: any, itemData?: Item) => {
@@ -695,12 +759,10 @@ const BOMLevel: React.FC<{
     onUpdate({ ...data, rawMaterials: arr });
   };
 
-  // ── Routing ──
   const addRouting = (routing: Routing, comment: string) =>
     onUpdate({ ...data, routing: [...data.routing, { routingId: routing.id, routingName: routing.name, routingNumber: routing.number, comment }] });
   const removeRouting = (i: number) => onUpdate({ ...data, routing: data.routing.filter((_, j) => j !== i) });
 
-  // ── Scrap ──
   const addScrap = () => onUpdate({ ...data, scrapItems: [...data.scrapItems, { id: "", name: "", category: "", quantity: 0, unit: "", costAllocation: 0, comment: "" }] });
   const removeScrap = (i: number) => onUpdate({ ...data, scrapItems: data.scrapItems.filter((_, j) => j !== i) });
   const updateScrap = (i: number, field: keyof UIScrapItem, val: any, itemData?: Item) => {
@@ -718,7 +780,6 @@ const BOMLevel: React.FC<{
 
   return (
     <div className="border-2 border-gray-200 rounded-xl bg-white mt-8 first:mt-0 shadow-sm overflow-hidden">
-      {/* Level Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-[#105076] text-white rounded-t-xl">
         <h2 className="text-xl font-bold">BOM Level {levelIndex + 1}</h2>
         {onDelete && (
@@ -728,7 +789,7 @@ const BOMLevel: React.FC<{
         )}
       </div>
 
-      {/* ── BOM Summary ── */}
+      {/* BOM Summary */}
       <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggle("bomSnapshot")}>
         <h3 className="font-semibold flex items-center gap-2 text-[#105076]"><FileText className="h-5 w-5" /> BOM Summary</h3>
         {data.expanded.bomSnapshot ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
@@ -752,7 +813,7 @@ const BOMLevel: React.FC<{
         </div>
       )}
 
-      {/* ── Finished Goods ── */}
+      {/* Finished Goods */}
       <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggle("finishedGoods")}>
         <h3 className="font-semibold flex items-center gap-2 text-[#105076]"><Package className="h-5 w-5 text-green-600" /> Finished Goods</h3>
         {data.expanded.finishedGoods ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
@@ -776,9 +837,7 @@ const BOMLevel: React.FC<{
                 {data.finishedGoods.map((fg, i) => (
                   <tr key={i} className="hover:bg-gray-50">
                     <td className="px-3 py-2 text-gray-400 text-xs w-8">{i + 1}</td>
-                    <td className="px-3 py-2 min-w-[200px]">
-                      <ItemSelect value={fg.itemId} onValueChange={(v, d) => updateFG(i, "itemId", v, d)} items={items} placeholder="Select item" />
-                    </td>
+                    <td className="px-3 py-2 min-w-[200px]"><ItemSelect value={fg.itemId} onValueChange={(v, d) => updateFG(i, "itemId", v, d)} items={fgItems} placeholder="Select FG item" fallbackName={fg.name} fallbackSku={fg.itemData?.sku} /></td>
                     <td className="px-3 py-2"><Input value={fg.category} onChange={(e) => updateFG(i, "category", e.target.value)} className="h-8 text-xs w-28" readOnly={!!fg.itemData} /></td>
                     <td className="px-3 py-2"><Input type="number" value={fg.quantity} onChange={(e) => updateFG(i, "quantity", Number(e.target.value) || 0)} className="h-8 text-xs w-20" min="1" /></td>
                     <td className="px-3 py-2"><Input value={fg.unit} onChange={(e) => updateFG(i, "unit", e.target.value)} className="h-8 text-xs w-20" readOnly={!!fg.itemData} /></td>
@@ -786,9 +845,7 @@ const BOMLevel: React.FC<{
                     <td className="px-3 py-2"><Input value={fg.comment} onChange={(e) => updateFG(i, "comment", e.target.value)} className="h-8 text-xs w-28" /></td>
                     <td className="px-3 py-2"><Input value={fg.alternateItems} onChange={(e) => updateFG(i, "alternateItems", e.target.value)} className="h-8 text-xs w-28" /></td>
                     <td className="px-3 py-2">
-                      {data.finishedGoods.length > 1 && (
-                        <Button variant="ghost" size="icon" onClick={() => removeFG(i)} className="h-7 w-7"><Trash2 className="h-3.5 w-3.5 text-red-500" /></Button>
-                      )}
+                      {data.finishedGoods.length > 1 && <Button variant="ghost" size="icon" onClick={() => removeFG(i)} className="h-7 w-7"><Trash2 className="h-3.5 w-3.5 text-red-500" /></Button>}
                     </td>
                   </tr>
                 ))}
@@ -798,7 +855,7 @@ const BOMLevel: React.FC<{
         </div>
       )}
 
-      {/* ── Raw Materials (with child BOM support) ── */}
+      {/* Raw Materials */}
       <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggle("rawMaterials")}>
         <h3 className="font-semibold flex items-center gap-2 text-[#105076]"><Package className="h-5 w-5 text-blue-600" /> Raw Materials</h3>
         {data.expanded.rawMaterials ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
@@ -828,7 +885,6 @@ const BOMLevel: React.FC<{
                   const childExpanded = childBOMExpandedSet.has(i);
                   return (
                     <React.Fragment key={i}>
-                      {/* Parent RM row */}
                       <tr className="border-t hover:bg-gray-50">
                         <td className="px-3 py-2 w-10">
                           {rm.childBOM ? (
@@ -842,9 +898,7 @@ const BOMLevel: React.FC<{
                             <span className="text-xs font-medium text-gray-600">{i + 1}</span>
                           )}
                         </td>
-                        <td className="px-3 py-2 min-w-[200px]">
-                          <ItemSelect value={rm.itemId} onValueChange={(v, d) => updateRM(i, "itemId", v, d)} items={items} placeholder="Select item" />
-                        </td>
+                        <td className="px-3 py-2 min-w-[200px]"><ItemSelect value={rm.itemId} onValueChange={(v, d) => updateRM(i, "itemId", v, d)} items={rmItems} placeholder="Select RM item" fallbackName={rm.name} fallbackSku={rm.itemData?.sku} /></td>
                         <td className="px-3 py-2"><Input value={rm.category} onChange={(e) => updateRM(i, "category", e.target.value)} className="h-8 text-xs w-28" readOnly={!!rm.itemData} /></td>
                         <td className="px-3 py-2"><Input type="number" value={rm.quantity} onChange={(e) => updateRM(i, "quantity", Number(e.target.value) || 0)} className="h-8 text-xs w-20" min="1" /></td>
                         <td className="px-3 py-2"><Input value={rm.unit} onChange={(e) => updateRM(i, "unit", e.target.value)} className="h-8 text-xs w-20" readOnly={!!rm.itemData} /></td>
@@ -859,12 +913,12 @@ const BOMLevel: React.FC<{
                               onLinkChildBOM={() => onOpenChildBOM(i)}
                               onRemove={() => removeRM(i)}
                               hasChildBOM={!!rm.childBOM}
+                              hasItem={!!rm.itemId}
                             />
                           </div>
                         </td>
                       </tr>
 
-                      {/* Child BOM header row */}
                       {rm.childBOM && childExpanded && (
                         <tr className="border-t bg-blue-50">
                           <td colSpan={8} className="px-4 py-1.5">
@@ -873,10 +927,7 @@ const BOMLevel: React.FC<{
                               <span className="text-xs font-semibold text-blue-700">Child BOM:</span>
                               <span className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded font-medium">{rm.childBOM.bomNumber}</span>
                               <span className="text-xs text-blue-600">{rm.childBOM.bomName}</span>
-                              <button
-                                onClick={() => onUnlinkChildBOM(i)}
-                                className="ml-auto flex items-center gap-1 text-xs text-red-400 hover:text-red-600 px-2 py-0.5 rounded hover:bg-red-50"
-                              >
+                              <button onClick={() => onUnlinkChildBOM(i)} className="ml-auto flex items-center gap-1 text-xs text-red-400 hover:text-red-600 px-2 py-0.5 rounded hover:bg-red-50">
                                 <X className="h-3 w-3" /> Unlink
                               </button>
                             </div>
@@ -884,7 +935,6 @@ const BOMLevel: React.FC<{
                         </tr>
                       )}
 
-                      {/* Child BOM RM rows */}
                       {rm.childBOM && childExpanded && rm.childBOM.rawMaterials.map((subRM, j) => (
                         <tr key={`${i}-c-${j}`} className="border-t bg-[#f0f7ff] hover:bg-blue-50/80">
                           <td className="px-3 py-2 w-10">
@@ -914,7 +964,7 @@ const BOMLevel: React.FC<{
         </div>
       )}
 
-      {/* ── Routing ── */}
+      {/* Routing */}
       <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggle("routing")}>
         <h3 className="font-semibold flex items-center gap-2 text-[#105076]"><GitBranch className="h-5 w-5 text-purple-600" /> Routing</h3>
         {data.expanded.routing ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
@@ -945,7 +995,7 @@ const BOMLevel: React.FC<{
         </div>
       )}
 
-      {/* ── Scrap ── */}
+      {/* Scrap */}
       <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggle("scrap")}>
         <h3 className="font-semibold flex items-center gap-2 text-[#105076]"><Trash2 className="h-5 w-5 text-orange-500" /> Scrap / By-Products</h3>
         {data.expanded.scrap ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
@@ -963,7 +1013,7 @@ const BOMLevel: React.FC<{
                   : data.scrapItems.map((s, i) => (
                     <tr key={i} className="hover:bg-gray-50">
                       <td className="px-4 py-2 text-gray-400 text-xs">{i + 1}</td>
-                      <td className="px-4 py-2 min-w-[180px]"><ItemSelect value={s.id} onValueChange={(v, d) => updateScrap(i, "id", v, d)} items={items} placeholder="Select item" /></td>
+                      <td className="px-4 py-2 min-w-[180px]"><ItemSelect value={s.id} onValueChange={(v, d) => updateScrap(i, "id", v, d)} items={scrapItems2} placeholder="Select Scrap item" fallbackName={s.name} fallbackSku={s.itemData?.sku} /></td>
                       <td className="px-4 py-2"><Input value={s.name} onChange={(e) => updateScrap(i, "name", e.target.value)} className="h-8 text-xs w-24" readOnly={!!s.itemData} /></td>
                       <td className="px-4 py-2"><Input value={s.category} onChange={(e) => updateScrap(i, "category", e.target.value)} className="h-8 text-xs w-24" readOnly={!!s.itemData} /></td>
                       <td className="px-4 py-2"><Input type="number" value={s.quantity} onChange={(e) => updateScrap(i, "quantity", Number(e.target.value) || 0)} className="h-8 text-xs w-20" min="0" /></td>
@@ -980,7 +1030,7 @@ const BOMLevel: React.FC<{
         </div>
       )}
 
-      {/* ── Other Charges ── */}
+      {/* Other Charges */}
       <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50" onClick={() => toggle("otherCharges")}>
         <h3 className="font-semibold flex items-center gap-2 text-[#105076]"><DollarSign className="h-5 w-5 text-teal-600" /> Other Charges</h3>
         {data.expanded.otherCharges ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
@@ -1013,7 +1063,7 @@ const EditBOM: React.FC = () => {
   const [docName, setDocName] = useState("");
   const [docNumber, setDocNumber] = useState("");
   const [docDate, setDocDate] = useState("");
-  const [status, setStatus] = useState<"draft" | "published">("draft");
+  const [status, setStatus] = useState<"planned" | "published" | "wip" | "completed">("planned");
   const [fgStore, setFgStore] = useState("");
   const [rmStore, setRmStore] = useState("");
   const [scrapStore, setScrapStore] = useState("");
@@ -1025,18 +1075,23 @@ const EditBOM: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [items, setItems] = useState<Item[]>([]);
+  const [fgItems, setFgItems] = useState<Item[]>([]);
+  const [rmItems, setRmItems] = useState<Item[]>([]);
+  const [scrapItems2, setScrapItems2] = useState<Item[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loadingWarehouses, setLoadingWarehouses] = useState(true);
 
   const [levels, setLevels] = useState<BOMLevelData[]>([]);
 
-  // ── Child BOM dialog state (lifted here, shared across all levels) ──
+  // Child BOM dialog state — per level + per RM index
   const [childBOMDialogOpen, setChildBOMDialogOpen] = useState(false);
   const [childBOMTargetIdx, setChildBOMTargetIdx] = useState<number | null>(null);
   const [childBOMTargetLevel, setChildBOMTargetLevel] = useState<number>(0);
   const [childBOMExpandedSet, setChildBOMExpandedSet] = useState<Set<number>>(new Set());
+
+  // Encode (levelIdx, rmIdx) → single key for the Set
+  const encodeKey = (levelIdx: number, rmIdx: number) => levelIdx * 10000 + rmIdx;
 
   const openChildBOM = (levelIdx: number, rmIdx: number) => {
     setChildBOMTargetLevel(levelIdx);
@@ -1045,8 +1100,7 @@ const EditBOM: React.FC = () => {
   };
 
   const toggleChildBOMExpanded = (levelIdx: number, rmIdx: number) => {
-    // We encode both level and rm index into a single key
-    const key = levelIdx * 10000 + rmIdx;
+    const key = encodeKey(levelIdx, rmIdx);
     setChildBOMExpandedSet((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key); else next.add(key);
@@ -1061,8 +1115,7 @@ const EditBOM: React.FC = () => {
       rms[rmIdx] = { ...rms[rmIdx], childBOM: null };
       return { ...lvl, rawMaterials: rms };
     }));
-    const key = levelIdx * 10000 + rmIdx;
-    setChildBOMExpandedSet((prev) => { const next = new Set(prev); next.delete(key); return next; });
+    setChildBOMExpandedSet((prev) => { const next = new Set(prev); next.delete(encodeKey(levelIdx, rmIdx)); return next; });
   };
 
   const handleChildBOMSave = (childBOM: LinkedChildBOM) => {
@@ -1075,33 +1128,54 @@ const EditBOM: React.FC = () => {
       rms[rIdx] = { ...rms[rIdx], childBOM };
       return { ...lvl, rawMaterials: rms };
     }));
-    const key = lIdx * 10000 + rIdx;
-    setChildBOMExpandedSet((prev) => new Set(prev).add(key));
+    setChildBOMExpandedSet((prev) => new Set(prev).add(encodeKey(lIdx, rIdx)));
     setChildBOMTargetIdx(null);
   };
 
-  // ── Fetch items ──
+  // ── Fetch items by category ──
+  const fetchItemsByCategory = async (category: string): Promise<Item[]> => {
+    try {
+      const res = await post("/inventory/items", {
+        filters: {},
+        search: { item_category: { value: category } },
+        pagination: { page: 1, itemsPerPage: 500, sortBy: ["createdAt"], sortDesc: [true] },
+      });
+      if (res?.status && Array.isArray(res.data?.items ?? res.data)) {
+        const raw = res.data?.items ?? res.data;
+        return raw.map((item: any) => ({
+          id: item.id?.toString() ?? "",
+          name: item.name ?? "",
+          sku: item.sku ?? "",
+          unit: item.unit,
+          category: item.category,
+          currentStock: item.currentStock ?? "0",
+          defaultPrice: item.defaultPrice ?? "0",
+          hsnCode: item.hsnCode ?? "",
+          minimumStockLevel: item.minimumStockLevel ?? "0",
+          maximumStockLevel: item.maximumStockLevel ?? "0",
+        }));
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  };
+
   useEffect(() => {
     (async () => {
       setLoadingItems(true);
       try {
-        const res = await get<any>("/inventory/item");
-        if (res?.status && Array.isArray(res.data)) {
-          setItems(res.data.map((item: any) => ({
-            id: item.id?.toString() ?? "",
-            name: item.name ?? "",
-            sku: item.sku ?? "",
-            unit: item.unit,
-            category: item.category,
-            currentStock: item.currentStock ?? "0",
-            defaultPrice: item.defaultPrice ?? "0",
-            hsnCode: item.hsnCode ?? "",
-            minimumStockLevel: item.minimumStockLevel ?? "0",
-            maximumStockLevel: item.maximumStockLevel ?? "0",
-          })));
-        }
-      } catch { setItems([]); }
-      finally { setLoadingItems(false); }
+        const [fg, rm, scrap] = await Promise.all([
+          fetchItemsByCategory("FG"),
+          fetchItemsByCategory("RM"),
+          fetchItemsByCategory("Scrap"),
+        ]);
+        setFgItems(fg);
+        setRmItems(rm);
+        setScrapItems2(scrap);
+      } finally {
+        setLoadingItems(false);
+      }
     })();
   }, []);
 
@@ -1117,7 +1191,7 @@ const EditBOM: React.FC = () => {
     })();
   }, []);
 
-  // ── Fetch BOM data for editing ──
+  // ── Fetch BOM for editing ──
   useEffect(() => {
     if (!id || loadingItems) return;
 
@@ -1133,7 +1207,8 @@ const EditBOM: React.FC = () => {
         setDocDate(d.docDate ? d.docDate.split("T")[0] : "");
         setDescription(d.docDescription ?? "");
         setComments(d.docComment ?? "");
-        setStatus((d.status?.toLowerCase() === "published" ? "published" : "draft") as "draft" | "published");
+        const s = d.status?.toLowerCase() as "planned" | "published" | "wip" | "completed";
+        setStatus((["planned","published","wip","completed"].includes(s) ? s : "planned") as "planned" | "published" | "wip" | "completed");
         setFgStore(d.fgStore?.id?.toString() ?? "");
         setRmStore(d.rmStore?.id?.toString() ?? "");
         setScrapStore(d.scrapStore?.id?.toString() ?? "");
@@ -1144,49 +1219,44 @@ const EditBOM: React.FC = () => {
           const expandedSet = new Set<number>();
 
           const transformed: BOMLevelData[] = d.bomItems.map((bomItem: any, levelIdx: number) => {
-            const fgItem = items.find((i) => i.id === bomItem.finishedGoods?.item?.id?.toString());
+            const fgItem = fgItems.find((i) => i.id === bomItem.finishedGoods?.item?.id?.toString());
 
-            // ── Raw Materials — check for subBom (child BOM) ──
+            // ── Raw Materials — subBom is now per RM row in the API response ──
             const rawMaterials: UIRawMaterial[] = (bomItem.rawMaterials ?? []).map((rm: any, rmIdx: number) => {
-              const rmItem = items.find((i) => i.id === rm.item?.id?.toString());
+              const rmItem = rmItems.find((i) => i.id === rm.item?.id?.toString());
 
-              // Populate child BOM only on the first RM row (rmIdx === 0).
-              // subBom is stored at bomItem level — there is no per-row indicator,
-              // and the save payload uses `firstChildBOM` (first linked RM).
+              // subBom nested directly on this RM row (new API structure)
               let childBOM: LinkedChildBOM | null = null;
-              if (rmIdx === 0 && (rm.subBom || bomItem.subBom)) {
-                const subBomData = rm.subBom ?? bomItem.subBom;
-                if (subBomData) {
-                  // Build child BOM from API data
-                  const childFGs: ChildBOMFGRow[] = (subBomData.bomItems ?? []).map((bi: any) => ({
-                    sku: bi.finishedGoods?.item?.sku ?? "-",
-                    name: bi.finishedGoods?.item?.name ?? "-",
-                    itemCategory: bi.finishedGoods?.item?.type ?? "-",
-                    quantity: bi.finishedGoods?.quantity ?? 0,
-                    unit: bi.finishedGoods?.unit?.name ?? "-",
-                    costAlloc: bi.finishedGoods?.costAlloc ?? 0,
-                    comment: bi.finishedGoods?.comment ?? "-",
-                  }));
-                  const childRMs: ChildBOMRMRow[] = (subBomData.bomItems ?? []).flatMap((bi: any) =>
-                    (bi.rawMaterials ?? []).map((crm: any) => ({
-                      sku: crm.item?.sku ?? "-",
-                      name: crm.item?.name ?? "-",
-                      category: crm.item?.type ?? "-",
-                      quantity: crm.quantity ?? 0,
-                      unit: crm.unit?.name ?? "-",
-                      comment: crm.comment ?? "-",
-                    }))
-                  );
-                  childBOM = {
-                    bomId: subBomData.id,
-                    bomNumber: subBomData.docNumber,
-                    bomName: subBomData.docName,
-                    finishedGoods: childFGs,
-                    rawMaterials: childRMs,
-                  };
-                  // Auto-expand linked child BOMs
-                  expandedSet.add(levelIdx * 10000 + rmIdx);
-                }
+              const subBomData = rm.subBom ?? null;
+              if (subBomData) {
+                const childFGs: ChildBOMFGRow[] = (subBomData.bomItems ?? []).map((bi: any) => ({
+                  sku: bi.finishedGoods?.item?.sku ?? "-",
+                  name: bi.finishedGoods?.item?.name ?? "-",
+                  itemCategory: bi.finishedGoods?.item?.type ?? "-",
+                  quantity: bi.finishedGoods?.quantity ?? 0,
+                  unit: bi.finishedGoods?.unit?.name ?? "-",
+                  costAlloc: bi.finishedGoods?.costAlloc ?? 0,
+                  comment: bi.finishedGoods?.comment ?? "-",
+                }));
+                const childRMs: ChildBOMRMRow[] = (subBomData.bomItems ?? []).flatMap((bi: any) =>
+                  (bi.rawMaterials ?? []).map((crm: any) => ({
+                    sku: crm.item?.sku ?? "-",
+                    name: crm.item?.name ?? "-",
+                    category: crm.item?.type ?? "-",
+                    quantity: crm.quantity ?? 0,
+                    unit: crm.unit?.name ?? "-",
+                    comment: crm.comment ?? "-",
+                  }))
+                );
+                childBOM = {
+                  bomId: subBomData.id,
+                  bomNumber: subBomData.docNumber,
+                  bomName: subBomData.docName,
+                  finishedGoods: childFGs,
+                  rawMaterials: childRMs,
+                };
+                // Auto-expand linked child BOMs on load
+                expandedSet.add(encodeKey(levelIdx, rmIdx));
               }
 
               return {
@@ -1203,7 +1273,9 @@ const EditBOM: React.FC = () => {
             });
 
             return {
-              expanded: { bomSnapshot: true, finishedGoods: true, rawMaterials: true, routing: true, scrap: true, otherCharges: true },
+              // ✅ Track the bomItem.id for use in PUT payload
+              bomItemId: bomItem.id,
+              expanded: defaultExpanded(),
               finishedGoods: bomItem.finishedGoods
                 ? [{
                     itemId: bomItem.finishedGoods.item?.id?.toString() ?? "",
@@ -1225,7 +1297,7 @@ const EditBOM: React.FC = () => {
                 comment: r.comment ?? "",
               })),
               scrapItems: (bomItem.scrap ?? []).map((s: any) => {
-                const scrapItem = items.find((i) => i.id === s.item?.id?.toString());
+                const scrapItem = scrapItems2.find((i) => i.id === s.item?.id?.toString());
                 return {
                   id: s.item?.id?.toString() ?? "",
                   name: s.item?.name ?? "",
@@ -1252,7 +1324,7 @@ const EditBOM: React.FC = () => {
           setChildBOMExpandedSet(expandedSet);
         } else {
           setLevels([{
-            expanded: { bomSnapshot: true, finishedGoods: true, rawMaterials: true, routing: true, scrap: true, otherCharges: true },
+            expanded: defaultExpanded(),
             finishedGoods: [{ itemId: "", name: "", category: "", quantity: 1, unit: "", costAllocation: 0, comment: "", alternateItems: "" }],
             rawMaterials: [{ itemId: "", name: "", category: "", quantity: 1, unit: "", comment: "", alternateItems: "" }],
             routing: [], scrapItems: [], otherCharges: defaultOtherCharges(),
@@ -1265,7 +1337,8 @@ const EditBOM: React.FC = () => {
 
   const addNewLevel = () =>
     setLevels((p) => [...p, {
-      expanded: { bomSnapshot: true, finishedGoods: true, rawMaterials: true, routing: true, scrap: true, otherCharges: true },
+      // No bomItemId — this is a new level, API will create it
+      expanded: defaultExpanded(),
       finishedGoods: [{ itemId: "", name: "", category: "", quantity: 1, unit: "", costAllocation: 0, comment: "", alternateItems: "" }],
       rawMaterials: [{ itemId: "", name: "", category: "", quantity: 1, unit: "", comment: "", alternateItems: "" }],
       routing: [], scrapItems: [], otherCharges: defaultOtherCharges(),
@@ -1280,7 +1353,9 @@ const EditBOM: React.FC = () => {
     setLevels((p) => p.map((lvl, i) => i === idx ? d : lvl));
 
   // ── Build update payload ──
-  const prepareUpdateData = (targetStatus: "draft" | "published"): BOMUpdateRequest => ({
+  // - bomItem.id included for existing rows (required by API)
+  // - subBomId placed on each individual RM row
+  const prepareUpdateData = (targetStatus: "planned" | "published" | "wip" | "completed"): BOMUpdateRequest => ({
     docNumber,
     docDate: docDate || new Date().toISOString().split("T")[0],
     docName,
@@ -1292,27 +1367,31 @@ const EditBOM: React.FC = () => {
     scrapStoreId: parseInt(scrapStore) || 0,
     bomItems: levels.map((level) => {
       const fg = level.finishedGoods[0];
-      const fgItem = items.find((i) => i.id === fg.itemId);
-      const firstChildBOM = level.rawMaterials.find((rm) => rm.childBOM?.bomId);
+      const fgItem = fgItems.find((i) => i.id === fg.itemId);
+
       return {
+        // ✅ Include bomItem.id for existing rows so the API updates rather than re-inserts
+        ...(level.bomItemId !== undefined ? { id: level.bomItemId } : {}),
         finishedGoods: {
           itemId: parseInt(fg.itemId) || 0,
           unitId: fgItem?.unit?.id ?? fg.itemData?.unit?.id ?? 0,
           quantity: fg.quantity,
           costAlloc: fg.costAllocation,
-          comment: fg.comment,
+          comment: fg.comment || undefined,
           hasAlternate: !!fg.alternateItems,
         },
-        subBomId: firstChildBOM?.childBOM?.bomId ?? undefined,
+        // ✅ Each RM row carries its own subBomId
         rawMaterials: level.rawMaterials.map((rm) => ({
           itemId: parseInt(rm.itemId) || 0,
           unitId: rm.itemData?.unit?.id ?? 0,
           quantity: rm.quantity,
           costAlloc: 0,
-          comment: rm.comment,
+          comment: rm.comment || undefined,
           hasAlternate: !!rm.alternateItems,
+          // null = explicitly unlink; undefined = no child BOM on this row
+          subBomId: rm.childBOM === null ? null : (rm.childBOM?.bomId ?? undefined),
         })),
-        routing: level.routing.map((r) => ({ routingId: r.routingId, comment: r.comment })),
+        routing: level.routing.map((r) => ({ routingId: r.routingId, comment: r.comment || undefined })),
         scrap: level.scrapItems.filter((s) => s.id).map((s) => ({
           itemId: parseInt(s.id) || 0,
           unitId: s.itemData?.unit?.id ?? 0,
@@ -1329,14 +1408,14 @@ const EditBOM: React.FC = () => {
     }),
   });
 
-  const handleSaveDraft = async () => {
+  const handleSavePlanned = async () => {
     if (!id) return;
     try {
       setSaving(true);
-      const res = await bomAPI.updateBOM(parseInt(id), prepareUpdateData("draft"));
-      if (res?.status) { toast.success("BOM saved as draft!"); navigate(`/production/bom/${id}`); }
-      else toast.error(res?.message || "Failed to save draft");
-    } catch (e) { toast.error("Error saving draft"); }
+      const res = await bomAPI.updateBOM(parseInt(id), prepareUpdateData("planned"));
+      if (res?.status) { toast.success("BOM saved as planned!"); navigate(`/production/bom/${id}`); }
+      else toast.error(res?.message || "Failed to save");
+    } catch { toast.error("Error saving BOM"); }
     finally { setSaving(false); }
   };
 
@@ -1348,7 +1427,7 @@ const EditBOM: React.FC = () => {
       const res = await bomAPI.updateBOM(parseInt(id), prepareUpdateData("published"));
       if (res?.status) { toast.success("BOM updated successfully!"); navigate(`/production/bom/${id}`); }
       else toast.error(res?.message || "Failed to update BOM");
-    } catch (e) { toast.error("Error updating BOM"); }
+    } catch { toast.error("Error updating BOM"); }
     finally { setSaving(false); }
   };
 
@@ -1399,9 +1478,9 @@ const EditBOM: React.FC = () => {
           <div className="space-y-1.5"><Label className="text-xs font-medium">Document Date</Label><Input type="date" value={docDate} onChange={(e) => setDocDate(e.target.value)} className="h-10" /></div>
           <div className="space-y-1.5">
             <Label className="text-xs font-medium">Status</Label>
-            <Select value={status} onValueChange={(v: "draft" | "published") => setStatus(v)}>
+            <Select value={status} onValueChange={(v: "planned" | "published" | "wip" | "completed") => setStatus(v)}>
               <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="draft">Draft</SelectItem><SelectItem value="published">Published</SelectItem></SelectContent>
+              <SelectContent><SelectItem value="planned">Planned</SelectItem><SelectItem value="published">Published</SelectItem><SelectItem value="wip">WIP / In Progress</SelectItem><SelectItem value="completed">Completed</SelectItem></SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5"><Label className="text-xs font-medium">FG Store <span className="text-red-500">*</span></Label><WarehouseSelect value={fgStore} onChange={setFgStore} placeholder="Select FG Store" /></div>
@@ -1409,7 +1488,6 @@ const EditBOM: React.FC = () => {
           <div className="space-y-1.5"><Label className="text-xs font-medium">Scrap/Reject Store <span className="text-red-500">*</span></Label><WarehouseSelect value={scrapStore} onChange={setScrapStore} placeholder="Select Scrap Store" /></div>
           <div className="space-y-1.5"><Label className="text-xs font-medium">Attachments</Label><Button variant="outline" className="w-full h-10 border-dashed text-sm"><Plus className="h-4 w-4 mr-2" /> Add Attachments</Button></div>
         </div>
-
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div>
             <div className="flex items-center justify-between mb-1.5">
@@ -1439,12 +1517,19 @@ const EditBOM: React.FC = () => {
           key={idx}
           levelIndex={idx}
           data={levelData}
-          items={items}
+          fgItems={fgItems}
+          rmItems={rmItems}
+          scrapItems2={scrapItems2}
           onUpdate={(u) => updateLevel(idx, u)}
           onDelete={idx > 0 ? () => deleteLevel(idx) : undefined}
-          childBOMDialogOpen={childBOMDialogOpen}
-          childBOMTargetIdx={childBOMTargetLevel === idx ? childBOMTargetIdx : null}
-          childBOMExpandedSet={new Set([...childBOMExpandedSet].filter((k) => Math.floor(k / 10000) === idx).map((k) => k % 10000))}
+          childBOMExpandedSet={
+            // Filter & remap the global set to a local (rmIdx-only) set for this level
+            new Set(
+              [...childBOMExpandedSet]
+                .filter((k) => Math.floor(k / 10000) === idx)
+                .map((k) => k % 10000)
+            )
+          }
           onOpenChildBOM={(rmIdx) => openChildBOM(idx, rmIdx)}
           onToggleChildBOMExpanded={(rmIdx) => toggleChildBOMExpanded(idx, rmIdx)}
           onUnlinkChildBOM={(rmIdx) => unlinkChildBOM(idx, rmIdx)}
@@ -1460,11 +1545,9 @@ const EditBOM: React.FC = () => {
 
       <div className="sticky bottom-0 border-t bg-white shadow-lg mt-8 z-10">
         <div className="px-6 py-4 flex justify-end gap-3">
-          <Button variant="outline" onClick={() => navigate(`/production/bom/${id}`)} disabled={saving} className="min-w-[120px]">
-            Cancel
-          </Button>
-          <Button variant="outline" onClick={handleSaveDraft} disabled={saving} className="min-w-[120px]">
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save as Draft
+          <Button variant="outline" onClick={() => navigate(`/production/bom/${id}`)} disabled={saving} className="min-w-[120px]">Cancel</Button>
+          <Button variant="outline" onClick={handleSavePlanned} disabled={saving} className="min-w-[120px]">
+            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save as Planned
           </Button>
           <Button onClick={handleSaveBOM} disabled={saving} className="bg-[#105076] hover:bg-[#0d4566] min-w-[120px]">
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Update BOM
@@ -1478,6 +1561,7 @@ const EditBOM: React.FC = () => {
         onClose={() => { setChildBOMDialogOpen(false); setChildBOMTargetIdx(null); }}
         onSave={handleChildBOMSave}
         currentChildBOM={childBOMTargetIdx !== null ? levels[childBOMTargetLevel]?.rawMaterials[childBOMTargetIdx]?.childBOM : null}
+        itemId={childBOMTargetIdx !== null ? levels[childBOMTargetLevel]?.rawMaterials[childBOMTargetIdx]?.itemId : undefined}
       />
     </div>
   );

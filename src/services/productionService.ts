@@ -180,6 +180,8 @@ export interface RMActionItem {
   comment: string;
   /** "issue" | "return" | "line_reject" */
   change_type: 'issue' | 'return' | 'line_reject';
+  /** Optional: ID of a specific barcode record to consume */
+  barcodeId?: number;
   selected_store: SelectedStore;
 }
 

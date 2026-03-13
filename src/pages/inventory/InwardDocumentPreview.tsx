@@ -542,12 +542,34 @@ const InwardDocumentPreview: React.FC = () => {
       </div>
 
       {/* Barcode Dialog */}
+      {/*
+        FIX: Map raw inwardData.items → BarcodeItem[] so that:
+          - id        = grnItemId  (the outer `id` on each grn item row)
+          - itemId    = item.item.id  (the actual inventory item record)
+          - itemCode  = item.item.sku
+          - description = item.item.name
+          - quantity  = item.accepted  (actual accepted quantity, not 0)
+          - unit      = "pcs" (extend if your API provides unit)
+      */}
       <BarcodeDialog
         open={showBarcodeDialog}
         onOpenChange={setShowBarcodeDialog}
         sourceType="GRN"
         grnId={inwardData?.id}
-        items={(inwardData?.items ?? [])}
+        referenceLabel={inwardData?.documentNumber ?? ""}
+        items={(inwardData?.items ?? []).map((grnItem: any) => ({
+          id:          grnItem.id,                              // grnItemId
+          itemId:      grnItem.item?.id ?? grnItem.id,         // inventory item id
+          itemCode:    grnItem.item?.sku ?? `ITM-${grnItem.id}`,
+          description: grnItem.item?.name ?? `Item ${grnItem.id}`,
+          quantity:    Number(
+                         grnItem.accepted                      // accepted qty (most accurate)
+                         ?? grnItem.inwordItem?.quantity       // fallback: inward qty
+                         ?? grnItem.poItem?.quantity           // fallback: PO qty
+                         ?? 0
+                       ),
+          unit:        grnItem.item?.unit ?? "pcs",
+        }))}
       />
     </div>
   );

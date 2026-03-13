@@ -59,6 +59,44 @@ const SortIcon: React.FC<{ columnId: string; sortState: SortState }> = ({ column
   return <ArrowDown className="w-3.5 h-3.5 ml-1 text-[#7047EB]" />;
 };
 
+// ─── FIFO Toggle ──────────────────────────────────────────────────────────────
+
+interface FifoToggleProps {
+  enabled: boolean;
+  onToggle: () => void;
+}
+
+const FifoToggle: React.FC<FifoToggleProps> = ({ enabled, onToggle }) => (
+  <button
+    onClick={onToggle}
+    className={`flex items-center gap-2.5 px-4 py-3 rounded-lg border-2 transition-all duration-200 select-none h-full
+      ${enabled
+        ? "border-violet-400 bg-violet-50 shadow-sm"
+        : "border-violet-200 bg-violet-50/40 hover:shadow-sm"
+      }`}
+    title="Toggle FIFO (First In, First Out) stock valuation method"
+  >
+    <div className="text-left">
+      <p className={`text-xs font-bold tracking-wide uppercase ${enabled ? "text-violet-700" : "text-violet-400"}`}>
+        FIFO
+      </p>
+      <p className={`text-[10px] leading-tight mt-0.5 ${enabled ? "text-violet-500" : "text-violet-300"}`}>
+        First In, First Out
+      </p>
+    </div>
+    {/* Toggle pill */}
+    <div
+      className={`relative w-10 h-5 rounded-full transition-colors duration-200 flex-shrink-0
+        ${enabled ? "bg-violet-500" : "bg-gray-200"}`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200
+          ${enabled ? "translate-x-5" : "translate-x-0"}`}
+      />
+    </div>
+  </button>
+);
+
 // ─── Stock Card ───────────────────────────────────────────────────────────────
 
 interface StockCardProps {
@@ -169,6 +207,7 @@ const ItemMaster: React.FC = () => {
   const [sortState, setSortState] = useState<SortState>({ columnId: null, direction: null });
   const [selectedProductType, setSelectedProductType] = useState<string>("all");
   const [activeStockStatus, setActiveStockStatus] = useState<StockStatus | "all">("all");
+  const [fifoEnabled, setFifoEnabled] = useState<boolean>(false);
 
   const [showAddUnitOfMeasurementModal, setShowAddUnitOfMeasurementModal] = useState(false);
   const [showAddWarehouseModal, setShowAddWarehouseModal] = useState(false);
@@ -200,6 +239,7 @@ const ItemMaster: React.FC = () => {
         ...(selectedProductType !== "all" && { isProduct: selectedProductType === "true" }),
         ...(activeStockStatus !== "all" && { stockStatus: activeStockStatus as StockStatus }),
         itemStatus: "all",
+        ...(fifoEnabled && { valuationMethod: "fifo" }),
       },
       search: {},
       pagination: {
@@ -209,7 +249,7 @@ const ItemMaster: React.FC = () => {
         sortDesc: hasSorting ? [sortState.direction === "desc"] : [true],
       },
     };
-  }, [selectedProductType, activeStockStatus, page, pageSize, sortState]);
+  }, [selectedProductType, activeStockStatus, page, pageSize, sortState, fifoEnabled]);
 
   // ─── Fetch items ──────────────────────────────────────────────────────────
 
@@ -240,6 +280,7 @@ const ItemMaster: React.FC = () => {
   const handleStockStatusChange = (status: StockStatus) => { setActiveStockStatus(prev => prev === status ? "all" : status); setPage(1); };
   const handleStatusDropdownChange = (value: string) => { setActiveStockStatus(value as StockStatus | "all"); setPage(1); };
   const handleRefreshItemTable = () => { fetchInventoryItems(); };
+  const handleFifoToggle = () => { setFifoEnabled(prev => !prev); setPage(1); };
 
   const toggleAddUnitOfMeasurementModal = () => setShowAddUnitOfMeasurementModal(p => !p);
   const toggleAddInventoryItemModal = () => setShowAddInventoryItemModal(p => !p);
@@ -325,6 +366,7 @@ const ItemMaster: React.FC = () => {
         <StockCard label="Negative Stock" count={summary.negativeStock} status="negative" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="red" />
         <StockCard label="Low Stock" count={summary.lowStock} status="low" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="amber" />
         <StockCard label="Excess Stock" count={summary.excessStock} status="excess" activeStatus={activeStockStatus} onClick={handleStockStatusChange} color="blue" />
+        <FifoToggle enabled={fifoEnabled} onToggle={handleFifoToggle} />
       </div>
 
       {/* ── Table ─────────────────────────────────────────────────────────── */}

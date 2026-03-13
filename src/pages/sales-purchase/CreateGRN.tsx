@@ -84,12 +84,25 @@ type ValidationErrors = {
   poNumber?: string;
   purchaseInword?: string;
   warehouseId?: string;
+  zoneId?: string;
   items?: string;
 };
 
 import { get, post } from "../../lib/apiService";
 import { useNavigate, useParams } from "react-router";
 import PurchaseGRNTable from "@/components/app/tables/sales-purchase/PurchaseGRNTable";
+import { Loader2 } from "lucide-react";
+
+// ── Warehouse hierarchy types ─────────────────────────────────────────────────
+interface HierarchyRack { rackId: number; rackName: string; items: any[] }
+interface HierarchyZone { zoneId: number; zoneName: string; racks: Record<string, HierarchyRack> }
+interface WarehouseHierarchy { warehouseId: number; zones: Record<string, HierarchyZone> }
+const getZones = (h: WarehouseHierarchy | null): HierarchyZone[] =>
+  h ? Object.values(h.zones) : [];
+const getRacks = (h: WarehouseHierarchy | null, zoneId: string): HierarchyRack[] => {
+  if (!h || !zoneId) return [];
+  return h.zones[zoneId] ? Object.values(h.zones[zoneId].racks) : [];
+};
 
 const CreateGRN: React.FC = () => {
   const navigate = useNavigate();
@@ -113,6 +126,10 @@ const CreateGRN: React.FC = () => {
   const [inwords, setInwords] = useState<Record<string, any> | null>(null);
   const [_purchaseInword, setPurchaseInword] = useState<string>("");
   const [warehouseId, setWarehouseId] = useState<number | null>(null);
+  const [warehouseHierarchy, setWarehouseHierarchy] = useState<WarehouseHierarchy | null>(null);
+  const [hierarchyLoading, setHierarchyLoading] = useState(false);
+  const [zoneId, setZoneId] = useState<string>("");
+  const [rackId, setRackId] = useState<string>("");
   const [remarks, setRemarks] = useState("");
   const [items, setItems] = useState<Item[]>([]);
   // const [purchaseOrders, setPurchaseOrders] = useState<Record<
@@ -188,6 +205,10 @@ const CreateGRN: React.FC = () => {
       newErrors.warehouseId = "Warehouse selection is required";
     }
 
+    if (!zoneId) {
+      newErrors.zoneId = "Zone selection is required";
+    }
+
     // Validate items
     if (items.length === 0) {
       newErrors.items = "At least one item is required";
@@ -204,6 +225,19 @@ const CreateGRN: React.FC = () => {
 
   useEffect(() => {
     console.log("warehouseId updated:", warehouseId);
+  }, [warehouseId]);
+
+  // Fetch warehouse hierarchy whenever warehouseId changes
+  useEffect(() => {
+    setZoneId("");
+    setRackId("");
+    setWarehouseHierarchy(null);
+    if (!warehouseId) return;
+    setHierarchyLoading(true);
+    get(`/inventory/store/stock/hierarchy/${warehouseId}`)
+      .then((d) => { if (d?.status) setWarehouseHierarchy(d.data); })
+      .catch(() => {/* zones/racks optional — silent fail */})
+      .finally(() => setHierarchyLoading(false));
   }, [warehouseId]);
 
   useEffect(() => {
@@ -295,6 +329,8 @@ const CreateGRN: React.FC = () => {
         poNumber: inwords?.purchaseOrder.id,
         purchaseInword: inwords?.id,
         warehouseId: Number(warehouseId),
+        ...(zoneId ? { zoneId: Number(zoneId) } : {}),
+        ...(rackId ? { rackId: Number(rackId) } : {}),
         grnStatus: "PENDING",
         remarks,
         items: processedItems,
@@ -610,6 +646,80 @@ const CreateGRN: React.FC = () => {
                       </p>
                     )}
                   </div>
+                </div>
+
+                {/* Zone (optional) — cascades from warehouse hierarchy */}
+                <div className="space-y-2">
+                  <Label className={labelClasses} htmlFor="zone">
+                    Zone
+                    <span className="text-[#F53D6B] ml-1">*</span>
+                  </Label>
+                  {hierarchyLoading ? (
+                    <div className={`${inputClasses} w-full flex items-center gap-2 h-9 px-3 rounded-md border border-neutral-200/70 bg-white opacity-60 cursor-not-allowed`}>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400 shrink-0" />
+                      <span className="text-sm text-gray-400">Loading zones…</span>
+                    </div>
+                  ) : (
+                    <>
+                      <Select
+                        name="zone"
+                        value={zoneId}
+                        onValueChange={(val) => {
+                          setZoneId(val);
+                          setRackId("");
+                          clearFieldError("zoneId");
+                        }}
+                        disabled={!warehouseId || getZones(warehouseHierarchy).length === 0}
+                      >
+                        <SelectTrigger className={`${inputClasses} w-full ${errors.zoneId ? "border-red-500" : ""}`}>
+                          <SelectValue placeholder={
+                            !warehouseId ? "Select warehouse first" :
+                            getZones(warehouseHierarchy).length === 0 ? "No zones available" :
+                            "Select zone"
+                          } />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {getZones(warehouseHierarchy).map((z) => (
+                            <SelectItem key={z.zoneId} value={String(z.zoneId)}>
+                              {z.zoneName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {errors.zoneId && (
+                        <p className="text-red-500 text-xs">{errors.zoneId}</p>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Rack (optional) — cascades from zone */}
+                <div className="space-y-2">
+                  <Label className={labelClasses} htmlFor="rack">
+                    Rack
+                    <span className="text-gray-400 ml-1 font-normal">(Optional)</span>
+                  </Label>
+                  <Select
+                    name="rack"
+                    value={rackId}
+                    onValueChange={setRackId}
+                    disabled={!zoneId || getRacks(warehouseHierarchy, zoneId).length === 0}
+                  >
+                    <SelectTrigger className={`${inputClasses} w-full`}>
+                      <SelectValue placeholder={
+                        !zoneId ? "Select zone first" :
+                        getRacks(warehouseHierarchy, zoneId).length === 0 ? "No racks available" :
+                        "Select rack"
+                      } />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {getRacks(warehouseHierarchy, zoneId).map((r) => (
+                        <SelectItem key={r.rackId} value={String(r.rackId)}>
+                          {r.rackName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 

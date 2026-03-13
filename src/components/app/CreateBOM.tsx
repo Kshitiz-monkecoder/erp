@@ -49,7 +49,7 @@ import {
   DialogTrigger,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { get } from "@/lib/apiService";
+import { get, post } from "@/lib/apiService";
 
 // ─────────────────────────────────────────────
 // Local UI Types
@@ -72,7 +72,6 @@ interface Warehouse {
   name: string;
 }
 
-// Rows shown in the child BOM dialog top table (FG)
 interface ChildBOMFGRow {
   sku: string;
   name: string;
@@ -83,7 +82,6 @@ interface ChildBOMFGRow {
   comment: string;
 }
 
-// Rows shown in the child BOM dialog bottom table (RM) + displayed as sub-rows in main table
 interface ChildBOMRMRow {
   sku: string;
   name: string;
@@ -242,14 +240,14 @@ const ItemSelect: React.FC<{
 };
 
 // ─────────────────────────────────────────────
-// Raw Material Actions Menu (fixed position, no overflow clipping)
-// Label changes: "Link Child BOM" / "Change Child Link"
+// Raw Material Actions Menu
 // ─────────────────────────────────────────────
 const RawMaterialActionsMenu: React.FC<{
   onLinkChildBOM: () => void;
   onRemove: () => void;
   hasChildBOM: boolean;
-}> = ({ onLinkChildBOM, onRemove, hasChildBOM }) => {
+  hasItem: boolean;
+}> = ({ onLinkChildBOM, onRemove, hasChildBOM, hasItem }) => {
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -292,15 +290,23 @@ const RawMaterialActionsMenu: React.FC<{
           className="w-52 bg-white border border-gray-200 rounded-lg shadow-xl py-1"
         >
           <button
-            onClick={() => { setOpen(false); onLinkChildBOM(); }}
-            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-blue-50 text-left text-gray-700 transition-colors"
+            onClick={() => { if (!hasItem) return; setOpen(false); onLinkChildBOM(); }}
+            disabled={!hasItem}
+            title={!hasItem ? "Select an item first" : undefined}
+            className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left transition-colors ${
+              hasItem
+                ? "hover:bg-blue-50 text-gray-700 cursor-pointer"
+                : "text-gray-300 cursor-not-allowed"
+            }`}
           >
-            <Link2 className="h-4 w-4 text-blue-600 shrink-0" />
+            <Link2 className={`h-4 w-4 shrink-0 ${hasItem ? "text-blue-600" : "text-gray-300"}`} />
             <span className="flex-1">
-              {/* ✅ requirement 3: label changes based on state */}
               {hasChildBOM ? "Change Child Link" : "Link Child BOM"}
             </span>
-            {hasChildBOM && (
+            {!hasItem && (
+              <span className="text-[10px] text-gray-400 shrink-0">Select item first</span>
+            )}
+            {hasItem && hasChildBOM && (
               <span className="bg-green-100 text-green-700 text-xs px-1.5 py-0.5 rounded font-medium shrink-0">
                 Linked
               </span>
@@ -322,10 +328,7 @@ const RawMaterialActionsMenu: React.FC<{
 
 // ─────────────────────────────────────────────
 // Link Child BOM Dialog
-// ✅ requirement 1: fetches real BOM list, populates both tables on selection
 // ─────────────────────────────────────────────
-
-// Matches actual API list item shape
 interface APIBOMListItem {
   id: number;
   docNumber: string;
@@ -353,24 +356,19 @@ const LinkChildBOMDialog: React.FC<{
   onClose: () => void;
   onSave: (childBOM: LinkedChildBOM) => void;
   currentChildBOM?: LinkedChildBOM | null;
-}> = ({ open, onClose, onSave, currentChildBOM }) => {
-  const navigate = useNavigate();
+  itemId?: string;
+}> = ({ open, onClose, onSave, currentChildBOM, itemId }) => {
+  // const navigate = useNavigate();
 
   const [bomList, setBomList] = useState<APIBOMListItem[]>([]);
   const [loadingList, setLoadingList] = useState(false);
-
+  const [noBOMsFound, setNoBOMsFound] = useState(false);
   const [selectedBOMId, setSelectedBOMId] = useState<string>("");
-
-  // Top table rows (FG of selected BOM)
   const [fgRows, setFgRows] = useState<ChildBOMFGRow[]>([]);
-  // Bottom table rows (RM of selected BOM)
   const [rmRows, setRmRows] = useState<ChildBOMRMRow[]>([]);
-
-  // Bottom table search
   const [idSearch, setIdSearch] = useState("");
   const [nameSearch, setNameSearch] = useState("");
 
-  // Reset + fetch when dialog opens
   useEffect(() => {
     if (open) {
       const existingId = currentChildBOM?.bomId?.toString() ?? "";
@@ -379,40 +377,43 @@ const LinkChildBOMDialog: React.FC<{
       setRmRows(currentChildBOM?.rawMaterials ?? []);
       setIdSearch("");
       setNameSearch("");
+      setNoBOMsFound(false);
       fetchBOMList();
     }
   }, [open]);
 
-  // ── Fetch published BOM list ──
   const fetchBOMList = async () => {
     setLoadingList(true);
+    setNoBOMsFound(false);
     try {
-      // Uses same endpoint as bomAPI but with query params for published BOMs
-      const res = await get("/production/bom?page=1&limit=100&status=published");
+      // Use item-specific endpoint if we have an itemId, else fall back to all published
+      const url = itemId
+        ? `/production/bom/finished-goods-item/${itemId}`
+        : `/production/bom?page=1&limit=100&status=published`;
+      const res = await get(url);
       if (res?.status && Array.isArray(res.data)) {
         setBomList(res.data as APIBOMListItem[]);
+        setNoBOMsFound(res.data.length === 0);
       } else {
         setBomList([]);
+        setNoBOMsFound(true);
       }
     } catch {
       setBomList([]);
+      setNoBOMsFound(true);
     } finally {
       setLoadingList(false);
     }
   };
 
-  // ── When a BOM is chosen from dropdown → populate both tables ──
   const handleSelectBOM = async (bomId: string) => {
     setSelectedBOMId(bomId);
     if (!bomId) { setFgRows([]); setRmRows([]); return; }
 
-    // First try to find in the already-fetched list (no extra API call needed)
     const found = bomList.find((b) => b.id.toString() === bomId);
-
     if (found) {
       populateTablesFromBOM(found);
     } else {
-      // Fallback: fetch by ID
       try {
         const res = await get(`/production/bom/${bomId}`);
         if (res?.status && res.data) {
@@ -425,20 +426,17 @@ const LinkChildBOMDialog: React.FC<{
     }
   };
 
-  // ── Maps API response → table rows ──
   const populateTablesFromBOM = (bom: APIBOMListItem) => {
-    // Top table: Finished Goods — one row per bomItem's finishedGoods
     const fgs: ChildBOMFGRow[] = (bom.bomItems ?? []).map((bi) => ({
       sku: bi.finishedGoods?.item?.sku ?? "-",
       name: bi.finishedGoods?.item?.name ?? "-",
-      itemCategory: "-", // API doesn't return category
+      itemCategory: "-",
       quantity: bi.finishedGoods?.quantity ?? 0,
       unit: bi.finishedGoods?.unit?.name ?? "-",
       costAlloc: bi.finishedGoods?.costAlloc ?? 0,
       comment: bi.finishedGoods?.comment || "-",
     }));
 
-    // Bottom table: Raw Materials — flattened across all bomItems
     const rms: ChildBOMRMRow[] = (bom.bomItems ?? []).flatMap((bi) =>
       (bi.rawMaterials ?? []).map((rm) => ({
         sku: rm.item?.sku ?? "-",
@@ -454,7 +452,6 @@ const LinkChildBOMDialog: React.FC<{
     setRmRows(rms);
   };
 
-  // Filtered bottom-table rows
   const filteredRM = rmRows.filter(
     (r) =>
       r.sku.toLowerCase().includes(idSearch.toLowerCase()) &&
@@ -478,8 +475,6 @@ const LinkChildBOMDialog: React.FC<{
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-0">
-
-        {/* Header */}
         <div className="flex items-center gap-3 px-6 py-4 border-b bg-white sticky top-0 z-10">
           <button onClick={onClose} className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
             <ArrowLeft className="h-5 w-5" />
@@ -488,8 +483,7 @@ const LinkChildBOMDialog: React.FC<{
         </div>
 
         <div className="p-6 space-y-4">
-
-          {/* ── Top Table: Finished Goods of selected BOM ── */}
+          {/* FG table */}
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b">
@@ -501,11 +495,7 @@ const LinkChildBOMDialog: React.FC<{
               </thead>
               <tbody>
                 {fgRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-gray-400 text-sm">
-                      No data available
-                    </td>
-                  </tr>
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400 text-sm">No data available</td></tr>
                 ) : (
                   fgRows.map((row, i) => (
                     <tr key={i} className="border-t hover:bg-gray-50">
@@ -524,7 +514,7 @@ const LinkChildBOMDialog: React.FC<{
             </table>
           </div>
 
-          {/* ── Bottom Table: Raw Materials of selected BOM (searchable) ── */}
+          {/* RM table with search */}
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b">
@@ -535,34 +525,18 @@ const LinkChildBOMDialog: React.FC<{
                 </tr>
               </thead>
               <tbody>
-                {/* Search row */}
                 <tr className="border-t bg-white">
                   <td className="px-4 py-2"></td>
                   <td className="px-4 py-2">
-                    <Input
-                      placeholder="Search..."
-                      value={idSearch}
-                      onChange={(e) => setIdSearch(e.target.value)}
-                      className="h-7 text-xs border-0 border-b border-gray-300 rounded-none px-0 focus-visible:ring-0 shadow-none"
-                    />
+                    <Input placeholder="Search..." value={idSearch} onChange={(e) => setIdSearch(e.target.value)} className="h-7 text-xs border-0 border-b border-gray-300 rounded-none px-0 focus-visible:ring-0 shadow-none" />
                   </td>
                   <td className="px-4 py-2">
-                    <Input
-                      placeholder="Search..."
-                      value={nameSearch}
-                      onChange={(e) => setNameSearch(e.target.value)}
-                      className="h-7 text-xs border-0 border-b border-gray-300 rounded-none px-0 focus-visible:ring-0 shadow-none"
-                    />
+                    <Input placeholder="Search..." value={nameSearch} onChange={(e) => setNameSearch(e.target.value)} className="h-7 text-xs border-0 border-b border-gray-300 rounded-none px-0 focus-visible:ring-0 shadow-none" />
                   </td>
                   <td colSpan={4} className="px-4 py-2"></td>
                 </tr>
-
                 {filteredRM.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-gray-400 text-sm">
-                      No data available
-                    </td>
-                  </tr>
+                  <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400 text-sm">No data available</td></tr>
                 ) : (
                   filteredRM.map((row, i) => (
                     <tr key={i} className="border-t hover:bg-gray-50">
@@ -580,89 +554,61 @@ const LinkChildBOMDialog: React.FC<{
             </table>
           </div>
 
-          {/* ── BOM Selector — bottom-right, matches image layout ── */}
+          {/* BOM selector */}
           <div className="flex items-center justify-end gap-2">
-            {/* Select BOM combobox — shows docNumber as option label */}
             <div className="min-w-[260px] relative">
               <Select value={selectedBOMId} onValueChange={handleSelectBOM}>
                 <SelectTrigger className="h-10 border border-gray-300 rounded-lg">
                   {loadingList ? (
-                    <div className="flex items-center gap-2 text-gray-400 text-sm">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading BOMs…
-                    </div>
+                    <div className="flex items-center gap-2 text-gray-400 text-sm"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading BOMs…</div>
                   ) : (
-                    <SelectValue placeholder="Select BOM">
-                      {selectedBOM ? selectedBOM.docNumber : "Select BOM"}
-                    </SelectValue>
+                    <SelectValue placeholder="Select BOM">{selectedBOM ? selectedBOM.docNumber : "Select BOM"}</SelectValue>
                   )}
                 </SelectTrigger>
                 <SelectContent className="z-[200]">
                   {loadingList ? (
-                    <div className="py-4 text-center">
-                      <Loader2 className="h-4 w-4 animate-spin mx-auto text-blue-500" />
+                    <div className="py-4 text-center"><Loader2 className="h-4 w-4 animate-spin mx-auto text-blue-500" /></div>
+                  ) : noBOMsFound ? (
+                    <div className="py-4 px-3 text-center space-y-2">
+                      <p className="text-gray-500 text-sm">No BOMs found for this item</p>
+                      <button
+                        className="text-sm font-medium text-[#105076] hover:underline"
+                        onMouseDown={(e) => { e.preventDefault(); window.open("/production/bom/create", "_blank"); }}
+                      >
+                        + Create BOM
+                      </button>
                     </div>
-                  ) : bomList.length === 0 ? (
-                    <div className="py-4 text-center text-gray-500 text-sm">No published BOMs found</div>
                   ) : (
                     bomList.map((bom) => (
-                      <SelectItem key={bom.id} value={bom.id.toString()}>
-                        {/* Show only docNumber, matching Image 1 */}
-                        {bom.docNumber}
-                      </SelectItem>
+                      <SelectItem key={bom.id} value={bom.id.toString()}>{bom.docNumber}</SelectItem>
                     ))
                   )}
                 </SelectContent>
               </Select>
-
-              {/* Floating label like Image 2 */}
               {selectedBOMId && (
-                <span className="absolute -top-2.5 left-3 text-[10px] text-gray-500 bg-white px-1">
-                  Select BOM
-                </span>
+                <span className="absolute -top-2.5 left-3 text-[10px] text-gray-500 bg-white px-1">Select BOM</span>
               )}
             </div>
-
-            {/* Clear (×) button — matching Image 2 */}
             {selectedBOMId && (
-              <button
-                onClick={() => { setSelectedBOMId(""); setFgRows([]); setRmRows([]); }}
-                className="h-10 w-10 flex items-center justify-center border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-400 hover:text-gray-600"
-                title="Clear selection"
-              >
+              <button onClick={() => { setSelectedBOMId(""); setFgRows([]); setRmRows([]); }} className="h-10 w-10 flex items-center justify-center border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-400 hover:text-gray-600" title="Clear selection">
                 <X className="h-4 w-4" />
               </button>
             )}
-
-            {/* Open BOM in new tab — matching Image 2 */}
             {selectedBOMId && (
-              <button
-                onClick={() => window.open(`/production/bom/${selectedBOMId}`, "_blank")}
-                className="h-10 w-10 flex items-center justify-center border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-400 hover:text-gray-600"
-                title="Open BOM"
-              >
+              <button onClick={() => window.open(`/production/bom/${selectedBOMId}`, "_blank")} className="h-10 w-10 flex items-center justify-center border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-400 hover:text-gray-600" title="Open BOM">
                 <ExternalLink className="h-4 w-4" />
               </button>
             )}
           </div>
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-between px-6 py-4 border-t bg-gray-50 sticky bottom-0">
-          <Button
-            variant="outline"
-            onClick={() => { onClose(); navigate("/production/bom/create"); }}
-            className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide"
-          >
-            <ExternalLink className="h-4 w-4" />
-            Create BOM
+          <Button variant="outline" onClick={() => window.open("/production/bom/create", "_blank")} className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide">
+            <ExternalLink className="h-4 w-4" /> Create BOM
           </Button>
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose}>Cancel</Button>
-            <Button
-              onClick={handleSave}
-              disabled={!selectedBOMId}
-              className="bg-[#105076] hover:bg-[#0d4566] text-white font-semibold px-8 uppercase tracking-wide"
-            >
+            <Button onClick={handleSave} disabled={!selectedBOMId} className="bg-[#105076] hover:bg-[#0d4566] text-white font-semibold px-8 uppercase tracking-wide">
               Save
             </Button>
           </div>
@@ -860,7 +806,9 @@ const CreateBOMPage: React.FC = () => {
   const [successDialogOpen, setSuccessDialogOpen] = useState(false);
   const [createdDocNumber, setCreatedDocNumber] = useState("");
 
-  const [items, setItems] = useState<Item[]>([]);
+  const [fgItems, setFgItems] = useState<Item[]>([]);
+  const [rmItems, setRmItems] = useState<Item[]>([]);
+  const [scrapItems2, setScrapItems2] = useState<Item[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loadingWarehouses, setLoadingWarehouses] = useState(true);
@@ -883,16 +831,15 @@ const CreateBOMPage: React.FC = () => {
     routing: [],
     scrapItems: [],
     otherCharges: [
-      { classification: "Labour Charges",     account: "Mintage", amount: 0, comment: "" },
-      { classification: "Machinery Charges",  account: "Account", amount: 0, comment: "" },
-      { classification: "Electricity Charges",account: "Account", amount: 0, comment: "" },
-      { classification: "Other Charges",      account: "Account", amount: 0, comment: "" },
+      { classification: "Labour Charges",      account: "Mintage", amount: 0, comment: "" },
+      { classification: "Machinery Charges",   account: "Account", amount: 0, comment: "" },
+      { classification: "Electricity Charges", account: "Account", amount: 0, comment: "" },
+      { classification: "Other Charges",       account: "Account", amount: 0, comment: "" },
     ],
   });
 
   const [childBOMDialogOpen, setChildBOMDialogOpen] = useState(false);
   const [childBOMTargetIdx, setChildBOMTargetIdx] = useState<number | null>(null);
-  // Tracks which parent RM rows have their child BOM sub-rows EXPANDED (default: all expanded)
   const [childBOMExpandedSet, setChildBOMExpandedSet] = useState<Set<number>>(new Set());
   const [docNumber] = useState(() => `BOM${Date.now().toString().slice(-6)}`);
 
@@ -903,44 +850,60 @@ const CreateBOMPage: React.FC = () => {
       return next;
     });
   };
-  // When a child BOM is saved, auto-expand it
+
   const handleChildBOMSaveWithExpand = (childBOM: LinkedChildBOM) => {
     if (childBOMTargetIdx === null) return;
     const upd = [...bom.rawMaterials];
     upd[childBOMTargetIdx] = { ...upd[childBOMTargetIdx], childBOM };
     setBom((p) => ({ ...p, rawMaterials: upd }));
-    // Auto-expand newly linked child BOM
     setChildBOMExpandedSet((prev) => new Set(prev).add(childBOMTargetIdx!));
     setChildBOMTargetIdx(null);
   };
 
-  // ── Fetch items ──
+  // ── Fetch items by category ──
+  const fetchItemsByCategory = async (category: string): Promise<Item[]> => {
+    try {
+      const res = await post("/inventory/items", {
+        filters: {},
+        search: { item_category: { value: category } },
+        pagination: { page: 1, itemsPerPage: 500, sortBy: ["createdAt"], sortDesc: [true] },
+      });
+      if (res?.status && Array.isArray(res.data?.items ?? res.data)) {
+        const raw = res.data?.items ?? res.data;
+        return raw.map((item: any) => ({
+          id: item.id?.toString() ?? "",
+          name: item.name ?? "",
+          sku: item.sku ?? "",
+          unit: item.unit,
+          category: item.category,
+          currentStock: item.currentStock ?? "0",
+          defaultPrice: item.defaultPrice ?? "0",
+          hsnCode: item.hsnCode ?? "",
+          minimumStockLevel: item.minimumStockLevel ?? "0",
+          maximumStockLevel: item.maximumStockLevel ?? "0",
+        }));
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  };
+
   useEffect(() => {
     (async () => {
       setLoadingItems(true);
       try {
-        const res = await bomAPI.getItems();
-        if (res?.status && Array.isArray(res.data)) {
-          setItems(res.data.map((item: any) => ({
-            id: item.id?.toString() ?? "",
-            name: item.name ?? "",
-            sku: item.sku ?? "",
-            unit: item.unit,
-            category: item.category,
-            currentStock: item.currentStock ?? "0",
-            defaultPrice: item.defaultPrice ?? "0",
-            hsnCode: item.hsnCode ?? "",
-            minimumStockLevel: item.minimumStockLevel ?? "0",
-            maximumStockLevel: item.maximumStockLevel ?? "0",
-          })));
-        } else {
-          setItems([
-            { id: "71", name: "test",      sku: "ITEM-001", unit: { name: "Kg",  description: "", uom: "BOX", id: 32 }, category: { name: "electronics", id: 41, description: "" }, currentStock: "2070", defaultPrice: "1000", hsnCode: "TTTT", minimumStockLevel: "1500", maximumStockLevel: "2000" },
-            { id: "72", name: "Product A", sku: "ITEM-002", unit: { name: "Pcs", description: "", uom: "PCS", id: 33 }, category: { name: "mechanical",  id: 42, description: "" }, currentStock: "150",  defaultPrice: "500",  hsnCode: "HHHH", minimumStockLevel: "100",  maximumStockLevel: "200"  },
-          ]);
-        }
-      } catch { setItems([]); }
-      finally { setLoadingItems(false); }
+        const [fg, rm, scrap] = await Promise.all([
+          fetchItemsByCategory("FG"),
+          fetchItemsByCategory("RM"),
+          fetchItemsByCategory("Scrap"),
+        ]);
+        setFgItems(fg);
+        setRmItems(rm);
+        setScrapItems2(scrap);
+      } finally {
+        setLoadingItems(false);
+      }
     })();
   }, []);
 
@@ -996,7 +959,6 @@ const CreateBOMPage: React.FC = () => {
     const upd = [...bom.rawMaterials];
     upd[idx] = { ...upd[idx], childBOM: null };
     setBom((p) => ({ ...p, rawMaterials: upd }));
-    // Remove from expanded set
     setChildBOMExpandedSet((prev) => { const next = new Set(prev); next.delete(idx); return next; });
   };
 
@@ -1025,8 +987,9 @@ const CreateBOMPage: React.FC = () => {
     setBom((p) => ({ ...p, otherCharges: upd }));
   };
 
-  // ── Build API payload (one bomItem per FG row) ──
-  const prepareBOMData = (status: "draft" | "published"): BOMCreateRequest => {
+  // ── Build API payload ──
+  // subBomId is set per raw material row (not at bomItem level)
+  const prepareBOMData = (status: "planned" | "published"): BOMCreateRequest => {
     const bomItems: BOMItemRequest[] = bom.finishedGoods.map((fg): BOMItemRequest => {
       const finishedGoods: FinishedGoodRequest = {
         itemId: parseInt(fg.itemId) || 0,
@@ -1036,6 +999,8 @@ const CreateBOMPage: React.FC = () => {
         comment: fg.comment || undefined,
         hasAlternate: !!fg.alternateItems,
       };
+
+      // Each RM row carries its own subBomId
       const rawMaterials: RawMaterialRequest[] = bom.rawMaterials.map((rm): RawMaterialRequest => ({
         itemId: parseInt(rm.itemId) || 0,
         unitId: rm.itemData?.unit?.id ?? 0,
@@ -1043,11 +1008,15 @@ const CreateBOMPage: React.FC = () => {
         costAlloc: 0,
         comment: rm.comment || undefined,
         hasAlternate: !!rm.alternateItems,
+        // null explicitly unlinks; undefined means no child BOM
+        subBomId: rm.childBOM?.bomId ?? null,
       }));
+
       const routing: RoutingRequest[] = bom.routing.map((r): RoutingRequest => ({
         routingId: r.routingId,
         comment: r.comment || undefined,
       }));
+
       const scrap: ScrapRequest[] = bom.scrapItems.filter((s) => s.id).map((s): ScrapRequest => ({
         itemId: parseInt(s.id) || 0,
         unitId: s.itemData?.unit?.id ?? 0,
@@ -1055,17 +1024,14 @@ const CreateBOMPage: React.FC = () => {
         costAlloc: s.costAllocation,
         comment: s.comment || undefined,
       }));
+
       const otherCharges: OtherChargeRequest[] = bom.otherCharges.map((c): OtherChargeRequest => ({
         charges: c.amount,
         classification: c.classification,
         comment: c.comment || undefined,
       }));
 
-      // subBomId: use the first raw material's linked child BOM
-      const firstChildBOM = bom.rawMaterials.find((rm) => rm.childBOM?.bomId);
-      const subBomId = firstChildBOM?.childBOM?.bomId ?? undefined;
-
-      return { finishedGoods, subBomId, rawMaterials, routing, scrap, otherCharges };
+      return { finishedGoods, rawMaterials, routing, scrap, otherCharges };
     });
 
     return {
@@ -1082,15 +1048,14 @@ const CreateBOMPage: React.FC = () => {
     };
   };
 
-  const handleSaveDraft = async () => {
+  const handleSavePlanned = async () => {
     setLoading(true);
     try {
-      const payload = prepareBOMData("draft");
-      console.log("Draft payload:", JSON.stringify(payload, null, 2));
+      const payload = prepareBOMData("planned");
       const res = await bomAPI.createBOM(payload);
       if (res?.status) { setCreatedDocNumber(docNumber); setSuccessDialogOpen(true); }
-      else alert("Failed to save draft. " + (res?.message ?? ""));
-    } catch (err) { console.error(err); alert("Error saving draft."); }
+      else alert("Failed to save BOM. " + (res?.message ?? ""));
+    } catch (err) { console.error(err); alert("Error saving BOM."); }
     finally { setLoading(false); }
   };
 
@@ -1126,7 +1091,6 @@ const CreateBOMPage: React.FC = () => {
     </Select>
   );
 
-  // ─────────────────────────────────────────────
   return (
     <div className="p-6 max-w-full mx-auto">
 
@@ -1265,7 +1229,7 @@ const CreateBOMPage: React.FC = () => {
                     <tr key={i} className="hover:bg-gray-50">
                       <td className="px-3 py-2 text-gray-400 text-xs w-8">{i + 1}</td>
                       <td className="px-3 py-2 min-w-[200px]">
-                        <ItemSelect value={fg.itemId} onValueChange={(v, d) => updateFG(i, "itemId", v, d)} items={items} placeholder="Select item" />
+                        <ItemSelect value={fg.itemId} onValueChange={(v, d) => updateFG(i, "itemId", v, d)} items={fgItems} placeholder="Select FG item" />
                       </td>
                       <td className="px-3 py-2"><Input value={fg.category} onChange={(e) => updateFG(i, "category", e.target.value)} className="h-8 text-xs w-28" readOnly={!!fg.itemData} /></td>
                       <td className="px-3 py-2"><Input type="number" value={fg.quantity} onChange={(e) => updateFG(i, "quantity", Number(e.target.value) || 0)} className="h-8 text-xs w-20" min="1" /></td>
@@ -1319,124 +1283,87 @@ const CreateBOMPage: React.FC = () => {
                   {bom.rawMaterials.map((rm, i) => {
                     const childExpanded = childBOMExpandedSet.has(i);
                     return (
-                    <React.Fragment key={i}>
-                      {/* Parent RM row */}
-                      <tr className="border-t hover:bg-gray-50">
-                        {/* # column: shows expand/collapse toggle when child BOM is linked */}
-                        <td className="px-3 py-2 w-10">
-                          {rm.childBOM ? (
-                            <button
-                              onClick={() => toggleChildBOMExpanded(i)}
-                              className="flex items-center gap-1 group"
-                              title={childExpanded ? "Collapse child BOM rows" : "Expand child BOM rows"}
-                            >
-                              <div className="w-5 h-5 rounded flex items-center justify-center bg-[#105076] text-white shrink-0">
-                                {childExpanded
-                                  ? <ChevronUp className="h-3 w-3" />
-                                  : <ChevronDown className="h-3 w-3" />}
-                              </div>
-                              <span className="text-xs font-semibold text-gray-700">{i + 1}</span>
-                            </button>
-                          ) : (
-                            <span className="text-xs font-medium text-gray-600">{i + 1}</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 min-w-[200px]">
-                          <ItemSelect value={rm.itemId} onValueChange={(v, d) => updateRM(i, "itemId", v, d)} items={items} placeholder="Select item" />
-                        </td>
-                        <td className="px-3 py-2"><Input value={rm.category} onChange={(e) => updateRM(i, "category", e.target.value)} className="h-8 text-xs w-28" readOnly={!!rm.itemData} /></td>
-                        <td className="px-3 py-2"><Input type="number" value={rm.quantity} onChange={(e) => updateRM(i, "quantity", Number(e.target.value) || 0)} className="h-8 text-xs w-20" min="1" /></td>
-                        <td className="px-3 py-2"><Input value={rm.unit} onChange={(e) => updateRM(i, "unit", e.target.value)} className="h-8 text-xs w-20" readOnly={!!rm.itemData} /></td>
-                        <td className="px-3 py-2"><Input value={rm.comment} onChange={(e) => updateRM(i, "comment", e.target.value)} className="h-8 text-xs w-28" /></td>
-                        <td className="px-3 py-2"><Input value={rm.alternateItems} onChange={(e) => updateRM(i, "alternateItems", e.target.value)} className="h-8 text-xs w-28" /></td>
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-1">
-                            <button title="Details" className="h-8 w-8 flex items-center justify-center rounded border border-gray-200 hover:bg-gray-100 text-gray-400">
-                              <svg width="14" height="14" fill="none" viewBox="0 0 24 24">
-                                <path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                              </svg>
-                            </button>
-                            <RawMaterialActionsMenu
-                              onLinkChildBOM={() => openChildBOM(i)}
-                              onRemove={() => removeRM(i)}
-                              hasChildBOM={!!rm.childBOM}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-
-                      {/* ── Child BOM header row (BOM badge) — shown when expanded ── */}
-                      {rm.childBOM && childExpanded && (
-                        <tr className="border-t bg-blue-50">
-                          <td colSpan={8} className="px-4 py-1.5">
-                            <div className="flex items-center gap-2">
-                              <Link2 className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-                              <span className="text-xs font-semibold text-blue-700">Child BOM:</span>
-                              <span className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded font-medium">
-                                {rm.childBOM.bomNumber}
-                              </span>
-                              <span className="text-xs text-blue-600">{rm.childBOM.bomName}</span>
-                              <button
-                                onClick={() => unlinkChildBOM(i)}
-                                title="Unlink child BOM"
-                                className="ml-auto flex items-center gap-1 text-xs text-red-400 hover:text-red-600 px-2 py-0.5 rounded hover:bg-red-50"
-                              >
-                                <X className="h-3 w-3" /> Unlink
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-
-                      {/* ── Child BOM RM rows — identical layout to parent rows, collapsible ── */}
-                      {rm.childBOM && childExpanded && rm.childBOM.rawMaterials.map((subRM, j) => (
-                        <tr key={`${i}-c-${j}`} className="border-t bg-[#f0f7ff] hover:bg-blue-50/80">
-                          {/* Sub-number: e.g. 1.1, 1.2 — styled like image (orange/salmon badge) */}
+                      <React.Fragment key={i}>
+                        {/* Parent RM row */}
+                        <tr className="border-t hover:bg-gray-50">
                           <td className="px-3 py-2 w-10">
-                            <div className="flex items-center justify-center">
-                              <span
-                                className="text-xs font-semibold text-white px-1.5 py-0.5 rounded min-w-[28px] text-center"
-                                style={{ backgroundColor: "#e8936a" }}
-                              >
-                                {i + 1}.{j + 1}
-                              </span>
-                            </div>
+                            {rm.childBOM ? (
+                              <button onClick={() => toggleChildBOMExpanded(i)} className="flex items-center gap-1 group" title={childExpanded ? "Collapse child BOM rows" : "Expand child BOM rows"}>
+                                <div className="w-5 h-5 rounded flex items-center justify-center bg-[#105076] text-white shrink-0">
+                                  {childExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                                </div>
+                                <span className="text-xs font-semibold text-gray-700">{i + 1}</span>
+                              </button>
+                            ) : (
+                              <span className="text-xs font-medium text-gray-600">{i + 1}</span>
+                            )}
                           </td>
-                          {/* ID column — read-only styled like a select */}
                           <td className="px-3 py-2 min-w-[200px]">
-                            <div className="h-8 flex items-center border border-gray-200 rounded px-3 bg-gray-50 text-xs font-medium text-gray-700 w-full">
-                              {subRM.sku || "—"}
+                            <ItemSelect value={rm.itemId} onValueChange={(v, d) => updateRM(i, "itemId", v, d)} items={rmItems} placeholder="Select RM item" />
+                          </td>
+                          <td className="px-3 py-2"><Input value={rm.category} onChange={(e) => updateRM(i, "category", e.target.value)} className="h-8 text-xs w-28" readOnly={!!rm.itemData} /></td>
+                          <td className="px-3 py-2"><Input type="number" value={rm.quantity} onChange={(e) => updateRM(i, "quantity", Number(e.target.value) || 0)} className="h-8 text-xs w-20" min="1" /></td>
+                          <td className="px-3 py-2"><Input value={rm.unit} onChange={(e) => updateRM(i, "unit", e.target.value)} className="h-8 text-xs w-20" readOnly={!!rm.itemData} /></td>
+                          <td className="px-3 py-2"><Input value={rm.comment} onChange={(e) => updateRM(i, "comment", e.target.value)} className="h-8 text-xs w-28" /></td>
+                          <td className="px-3 py-2"><Input value={rm.alternateItems} onChange={(e) => updateRM(i, "alternateItems", e.target.value)} className="h-8 text-xs w-28" /></td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-1">
+                              <button title="Details" className="h-8 w-8 flex items-center justify-center rounded border border-gray-200 hover:bg-gray-100 text-gray-400">
+                                <svg width="14" height="14" fill="none" viewBox="0 0 24 24">
+                                  <path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                                </svg>
+                              </button>
+                              <RawMaterialActionsMenu
+                                onLinkChildBOM={() => openChildBOM(i)}
+                                onRemove={() => removeRM(i)}
+                                hasChildBOM={!!rm.childBOM}
+                                hasItem={!!rm.itemId}
+                              />
                             </div>
-                          </td>
-                          {/* Name column — read-only styled like a select */}
-                          <td className="px-3 py-2">
-                            <div className="h-8 flex items-center border border-gray-200 rounded px-3 bg-gray-50 text-xs text-gray-700 w-28 truncate">
-                              {subRM.name || "—"}
-                            </div>
-                          </td>
-                          {/* Category */}
-                          <td className="px-3 py-2">
-                            <Input value={subRM.category || ""} readOnly className="h-8 text-xs w-20 bg-gray-50" />
-                          </td>
-                          {/* Quantity */}
-                          <td className="px-3 py-2">
-                            <Input value={subRM.quantity} readOnly className="h-8 text-xs w-20 bg-gray-50 text-right" />
-                          </td>
-                          {/* Unit */}
-                          <td className="px-3 py-2">
-                            <Input value={subRM.unit || ""} readOnly className="h-8 text-xs w-20 bg-gray-50" />
-                          </td>
-                          {/* Comment */}
-                          <td className="px-3 py-2">
-                            <Input value={subRM.comment || ""} readOnly className="h-8 text-xs w-28 bg-gray-50" />
-                          </td>
-                          {/* Actions — empty for child rows */}
-                          <td className="px-3 py-2">
-                            <div className="h-8 w-8" />
                           </td>
                         </tr>
-                      ))}
-                    </React.Fragment>
+
+                        {/* Child BOM header row */}
+                        {rm.childBOM && childExpanded && (
+                          <tr className="border-t bg-blue-50">
+                            <td colSpan={8} className="px-4 py-1.5">
+                              <div className="flex items-center gap-2">
+                                <Link2 className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                                <span className="text-xs font-semibold text-blue-700">Child BOM:</span>
+                                <span className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded font-medium">{rm.childBOM.bomNumber}</span>
+                                <span className="text-xs text-blue-600">{rm.childBOM.bomName}</span>
+                                <button onClick={() => unlinkChildBOM(i)} title="Unlink child BOM" className="ml-auto flex items-center gap-1 text-xs text-red-400 hover:text-red-600 px-2 py-0.5 rounded hover:bg-red-50">
+                                  <X className="h-3 w-3" /> Unlink
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+
+                        {/* Child BOM RM sub-rows */}
+                        {rm.childBOM && childExpanded && rm.childBOM.rawMaterials.map((subRM, j) => (
+                          <tr key={`${i}-c-${j}`} className="border-t bg-[#f0f7ff] hover:bg-blue-50/80">
+                            <td className="px-3 py-2 w-10">
+                              <div className="flex items-center justify-center">
+                                <span className="text-xs font-semibold text-white px-1.5 py-0.5 rounded min-w-[28px] text-center" style={{ backgroundColor: "#e8936a" }}>
+                                  {i + 1}.{j + 1}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 min-w-[200px]">
+                              <div className="h-8 flex items-center border border-gray-200 rounded px-3 bg-gray-50 text-xs font-medium text-gray-700 w-full">{subRM.sku || "—"}</div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="h-8 flex items-center border border-gray-200 rounded px-3 bg-gray-50 text-xs text-gray-700 w-28 truncate">{subRM.name || "—"}</div>
+                            </td>
+                            <td className="px-3 py-2"><Input value={subRM.category || ""} readOnly className="h-8 text-xs w-20 bg-gray-50" /></td>
+                            <td className="px-3 py-2"><Input value={subRM.quantity} readOnly className="h-8 text-xs w-20 bg-gray-50 text-right" /></td>
+                            <td className="px-3 py-2"><Input value={subRM.unit || ""} readOnly className="h-8 text-xs w-20 bg-gray-50" /></td>
+                            <td className="px-3 py-2"><Input value={subRM.comment || ""} readOnly className="h-8 text-xs w-28 bg-gray-50" /></td>
+                            <td className="px-3 py-2"><div className="h-8 w-8" /></td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -1472,16 +1399,7 @@ const CreateBOMPage: React.FC = () => {
                         <td className="px-3 py-2 font-medium text-sm">{r.routingNumber}</td>
                         <td className="px-3 py-2 text-gray-600 text-sm">{r.routingName}</td>
                         <td className="px-3 py-2">
-                          <Input
-                            value={r.comment}
-                            onChange={(e) => {
-                              const upd = [...bom.routing];
-                              upd[i] = { ...upd[i], comment: e.target.value };
-                              setBom((p) => ({ ...p, routing: upd }));
-                            }}
-                            className="h-8 text-xs"
-                            placeholder="Add comment"
-                          />
+                          <Input value={r.comment} onChange={(e) => { const upd = [...bom.routing]; upd[i] = { ...upd[i], comment: e.target.value }; setBom((p) => ({ ...p, routing: upd })); }} className="h-8 text-xs" placeholder="Add comment" />
                         </td>
                         <td className="px-3 py-2">
                           <Button variant="ghost" size="icon" onClick={() => removeRouting(i)} className="h-7 w-7">
@@ -1497,7 +1415,7 @@ const CreateBOMPage: React.FC = () => {
           </div>
         )}
 
-        {/* Scrap / By-Products */}
+        {/* Scrap */}
         <div className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 border-b" onClick={() => toggle("scrap")}>
           <h3 className="font-semibold flex items-center gap-2 text-[#105076]">
             <Trash2 className="h-5 w-5 text-orange-500" /> Scrap / By-Products
@@ -1523,7 +1441,7 @@ const CreateBOMPage: React.FC = () => {
                       <tr key={i} className="hover:bg-gray-50">
                         <td className="px-4 py-2 text-gray-400 text-xs">{i + 1}</td>
                         <td className="px-4 py-2 min-w-[180px]">
-                          <ItemSelect value={s.id} onValueChange={(v, d) => updateScrap(i, "id", v, d)} items={items} placeholder="Select item" />
+                          <ItemSelect value={s.id} onValueChange={(v, d) => updateScrap(i, "id", v, d)} items={scrapItems2} placeholder="Select Scrap item" />
                         </td>
                         <td className="px-4 py-2"><Input value={s.name} onChange={(e) => updateScrap(i, "name", e.target.value)} className="h-8 text-xs w-24" readOnly={!!s.itemData} /></td>
                         <td className="px-4 py-2"><Input value={s.category} onChange={(e) => updateScrap(i, "category", e.target.value)} className="h-8 text-xs w-24" readOnly={!!s.itemData} /></td>
@@ -1576,13 +1494,13 @@ const CreateBOMPage: React.FC = () => {
       {/* Footer */}
       <div className="sticky bottom-0 border-t bg-white shadow-lg mt-8 z-10">
         <div className="px-6 py-4 flex justify-end gap-3">
-          <Button variant="outline" onClick={handleSaveDraft} disabled={loading} className="min-w-[120px]">
+          <Button variant="outline" onClick={handleSavePlanned} disabled={loading} className="min-w-[120px]">
             {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-            Save to Draft
+            Save as Planned
           </Button>
           <Button onClick={handleSaveBOM} disabled={loading} className="bg-[#105076] hover:bg-[#0d4566] min-w-[120px]">
             {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-            Save BOM
+            Publish BOM
           </Button>
         </div>
       </div>
@@ -1593,6 +1511,7 @@ const CreateBOMPage: React.FC = () => {
         onClose={() => { setChildBOMDialogOpen(false); setChildBOMTargetIdx(null); }}
         onSave={handleChildBOMSaveWithExpand}
         currentChildBOM={childBOMTargetIdx !== null ? bom.rawMaterials[childBOMTargetIdx]?.childBOM : null}
+        itemId={childBOMTargetIdx !== null ? bom.rawMaterials[childBOMTargetIdx]?.itemId : undefined}
       />
 
       {/* Success Dialog */}

@@ -28,8 +28,10 @@ import {
   Users,
   Factory,
   Wrench,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { get } from "@/lib/apiService";
 
 // ─────────────────────────────────────────────
 // Re-usable types (subset matching process-details.tsx)
@@ -149,6 +151,8 @@ export interface RMActionRow {
   addLess: string;
   quantity: number;
   newQuantity: number;
+  /** Optional barcode record ID to consume a specific barcode (sent as barcodeId in rm_data payload) */
+  barcodeId?: number | null;
 }
 
 export interface RoutingActionRow {
@@ -312,6 +316,27 @@ const TakeActionsDialog: React.FC<TakeActionsDialogProps> = ({
   const [scrapRows, setScrapRows] = useState<ScrapActionRow[]>([]);
   const [chargeRows, setChargeRows] = useState<OtherChargeActionRow[]>([]);
 
+  // ── Per-item barcode options (keyed by itemId, fetched lazily) ──
+  const [itemBarcodes, setItemBarcodes] = useState<Record<string, { id: number; barcodeNumber: string; quantity: number }[]>>({});
+  const [barcodeLoading, setBarcodeLoading] = useState<Record<string, boolean>>({});
+
+  const fetchBarcodesForItem = useCallback(async (itemId: string) => {
+    if (!itemId || itemBarcodes[itemId] !== undefined) return;
+    setBarcodeLoading((p) => ({ ...p, [itemId]: true }));
+    try {
+      const res = await get(`/inventory/item/${itemId}/barcodes`);
+      if (res?.status && Array.isArray(res.data)) {
+        setItemBarcodes((p) => ({ ...p, [itemId]: res.data }));
+      } else {
+        setItemBarcodes((p) => ({ ...p, [itemId]: [] }));
+      }
+    } catch {
+      setItemBarcodes((p) => ({ ...p, [itemId]: [] }));
+    } finally {
+      setBarcodeLoading((p) => ({ ...p, [itemId]: false }));
+    }
+  }, [itemBarcodes]);
+
   // ── Populate rows from levels whenever dialog opens ──
   useEffect(() => {
     if (!open || levels.length === 0) return;
@@ -421,6 +446,12 @@ const TakeActionsDialog: React.FC<TakeActionsDialogProps> = ({
     }
   }, [open, defaultSection]);
 
+  // Pre-fetch barcodes when RM section is open and rmRows are available
+  useEffect(() => {
+    if (!sections.issueRM) return;
+    rmRows.forEach((r) => { if (r.itemId) fetchBarcodesForItem(r.itemId); });
+  }, [sections.issueRM, rmRows, fetchBarcodesForItem]);
+
   const toggleSection = useCallback((key: keyof SectionState) => {
     setSections((p) => ({ ...p, [key]: !p[key] }));
   }, []);
@@ -441,9 +472,14 @@ const TakeActionsDialog: React.FC<TakeActionsDialogProps> = ({
     setRmRows((prev) => {
       const next = [...prev];
       (next[idx] as any)[field] = val;
-      if (field === "quantity") {
-        const sign = next[idx].addLess === "Return to ..." ? 1 : -1;
-        next[idx].newQuantity = next[idx].currentStock + sign * Number(val);
+      // Recompute newQuantity on both quantity and addLess changes
+      if (field === "quantity" || field === "addLess") {
+        const row = next[idx];
+        const qty = field === "quantity" ? Number(val) : row.quantity;
+        const mode = field === "addLess" ? String(val) : row.addLess;
+        // "Issue from ..." deducts; "Return to ..." and "Line Reject" add back to stock
+        const sign = mode === "Issue from ..." ? -1 : 1;
+        next[idx].newQuantity = row.currentStock + sign * qty;
       }
       return next;
     });
@@ -668,6 +704,7 @@ const TakeActionsDialog: React.FC<TakeActionsDialogProps> = ({
                     <TH>ADD/LESS</TH>
                     <TH className="text-center">QUANTITY</TH>
                     <TH className="text-center">NEW QUANTITY</TH>
+                    <TH>BARCODE</TH>
                   </tr>
                   {/* Search row */}
                   <tr className="bg-white">
@@ -688,7 +725,7 @@ const TakeActionsDialog: React.FC<TakeActionsDialogProps> = ({
                         className="h-6 text-xs border-0 border-b rounded-none shadow-none focus-visible:ring-0"
                       />
                     </td>
-                    <td colSpan={9} className="border-b" />
+                    <td colSpan={10} className="border-b" />
                   </tr>
                 </thead>
                 <tbody>
@@ -697,7 +734,12 @@ const TakeActionsDialog: React.FC<TakeActionsDialogProps> = ({
                       <td colSpan={12} className="px-4 py-8 text-center text-gray-400">No raw materials</td>
                     </tr>
                   ) : filteredRM.map((row, i) => (
-                    <tr key={i} className="border-t hover:bg-gray-50">
+                    <tr
+                      key={i}
+                      className={`border-t hover:bg-gray-50 ${
+                        row.addLess === "Line Reject" ? "bg-red-50/50" : ""
+                      }`}
+                    >
                       <td className="px-3 py-2 border-r text-gray-500 text-center">{i + 1}</td>
                       <td className="px-3 py-2 border-r text-blue-600 font-medium whitespace-nowrap">{row.itemId}</td>
                       <td className="px-3 py-2 border-r whitespace-nowrap">{row.itemName}</td>
@@ -729,18 +771,41 @@ const TakeActionsDialog: React.FC<TakeActionsDialogProps> = ({
                           </SelectContent>
                         </Select>
                       </td>
-                      {/* Add/Less */}
-                      <td className="px-3 py-2 border-r min-w-[130px]">
+                      {/* Add/Less — three options including Line Reject */}
+                      <td className="px-3 py-2 border-r min-w-[140px]">
                         <Select
                           value={row.addLess}
                           onValueChange={(v) => updateRM(i, "addLess", v)}
                         >
-                          <SelectTrigger className="h-7 text-xs">
-                            <SelectValue>{row.addLess}</SelectValue>
+                          <SelectTrigger
+                            className={`h-7 text-xs ${
+                              row.addLess === "Line Reject"
+                                ? "border-red-300 text-red-700 bg-red-50"
+                                : row.addLess === "Return to ..."
+                                ? "border-amber-300 text-amber-700 bg-amber-50"
+                                : ""
+                            }`}
+                          >
+                            <SelectValue>
+                              {row.addLess === "Line Reject" ? (
+                                <span className="flex items-center gap-1">
+                                  <XCircle className="h-3 w-3 shrink-0" />
+                                  Line Reject
+                                </span>
+                              ) : (
+                                row.addLess
+                              )}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="Issue from ...">Issue from ...</SelectItem>
                             <SelectItem value="Return to ...">Return to ...</SelectItem>
+                            <SelectItem value="Line Reject">
+                              <span className="flex items-center gap-1.5 text-red-600">
+                                <XCircle className="h-3.5 w-3.5 shrink-0" />
+                                Line Reject
+                              </span>
+                            </SelectItem>
                           </SelectContent>
                         </Select>
                       </td>
@@ -752,9 +817,39 @@ const TakeActionsDialog: React.FC<TakeActionsDialogProps> = ({
                           className="w-16 mx-auto"
                         />
                       </td>
-                      {/* New Quantity — computed */}
-                      <td className="px-3 py-2 text-center text-gray-500">
+                      {/* New Quantity — computed, red when Line Reject */}
+                      <td className={`px-3 py-2 text-center font-medium ${
+                        row.addLess === "Line Reject" ? "text-red-600" : "text-gray-500"
+                      }`}>
                         {row.newQuantity || 0}
+                      </td>
+                      {/* Barcode select — only meaningful for "Issue from ..." */}
+                      <td className="px-3 py-2 border-l min-w-[170px]">
+                        <Select
+                          value={row.barcodeId != null ? String(row.barcodeId) : "__none__"}
+                          onValueChange={(v) => updateRM(i, "barcodeId", v === "__none__" ? null : Number(v))}
+                          onOpenChange={(open) => { if (open) fetchBarcodesForItem(row.itemId); }}
+                          disabled={row.addLess !== "Issue from ..."}
+                        >
+                          <SelectTrigger className="h-7 text-xs">
+                            {barcodeLoading[row.itemId]
+                              ? <span className="flex items-center gap-1 text-gray-400"><Loader2 className="h-3 w-3 animate-spin" />Loading…</span>
+                              : <SelectValue placeholder="Select barcode (opt.)" />
+                            }
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">— None —</SelectItem>
+                            {(itemBarcodes[row.itemId] ?? []).map((b) => (
+                              <SelectItem key={b.id} value={String(b.id)}>
+                                {b.barcodeNumber}
+                                {b.quantity != null ? ` (qty: ${b.quantity})` : ""}
+                              </SelectItem>
+                            ))}
+                            {(itemBarcodes[row.itemId] ?? []).length === 0 && !barcodeLoading[row.itemId] && itemBarcodes[row.itemId] !== undefined && (
+                              <div className="px-3 py-2 text-xs text-gray-400">No barcodes found</div>
+                            )}
+                          </SelectContent>
+                        </Select>
                       </td>
                     </tr>
                   ))}

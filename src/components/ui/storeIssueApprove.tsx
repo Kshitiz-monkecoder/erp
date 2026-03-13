@@ -1,5 +1,5 @@
 // src/components/production/StoreIssueApprovalDialog.tsx
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect, useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -14,12 +14,23 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import {
   ChevronDown,
   Printer,
   Barcode,
   CheckCircle,
+  Loader2,
+  // Warehouse,
 } from "lucide-react";
 import BarcodeDialog from "@/components/app/modals/BarcodeDialogue";
+import { get } from "@/lib/apiService";
 
 // ─────────────────────────────────────────────
 // Types
@@ -55,10 +66,23 @@ export interface ApprovalRow {
   comment: string;
   /**
    * For FG rows: the actual inventory item ID sent as itemId in the barcode payload.
-   * Populated from FinishedGood.itemData.id via takeActionDialogue → buildApprovalRows.
    */
   rawItemId?: string;
+  /** For RM rows: selected batch number */
+  batch?: string;
 }
+
+// ── Hierarchy types ───────────────────────────────────────────────────────────
+interface HierarchyRack  { rackId: number; rackName: string; items: any[] }
+interface HierarchyZone  { zoneId: number; zoneName: string; racks: Record<string, HierarchyRack> }
+interface WHierarchy     { warehouseId: number; zones: Record<string, HierarchyZone> }
+interface WarehouseOption { id: number; name: string }
+
+const getHierarchyZones = (h: WHierarchy | null) => h ? Object.values(h.zones) : [];
+const getHierarchyRacks = (h: WHierarchy | null, zoneId: string) => {
+  if (!h || !zoneId) return [];
+  return h.zones[zoneId] ? Object.values(h.zones[zoneId].racks) : [];
+};
 
 export interface StoreIssueApprovalMeta {
   documentType: string;    // "Process RM" | "Process FG" | "Process Scrap" …
@@ -153,7 +177,66 @@ const StoreIssueApprovalDialog: React.FC<StoreIssueApprovalDialogProps> = ({
   const [barcodeOpen, setBarcodeOpen] = useState(false);
 
   const sourceType: BarcodeSourceType = meta.sourceType ?? "NONE";
+  const isFG = sourceType === "FG";
+  const isRM = meta.documentType?.toLowerCase().includes("rm") || meta.documentType?.toLowerCase().includes("raw");
   const canBarcode = sourceType === "GRN" || sourceType === "FG";
+
+  // ── Warehouse / zone / rack for FG barcode ────────────────────────────────
+  const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>("");
+  const [hierarchy, setHierarchy] = useState<WHierarchy | null>(null);
+  const [hierarchyLoading, setHierarchyLoading] = useState(false);
+  const [selectedZoneId, setSelectedZoneId] = useState<string>("");
+  const [selectedRackId, setSelectedRackId] = useState<string>("");
+
+  // ── Batch per row for RM ──────────────────────────────────────────────────
+  const [batchMap, setBatchMap] = useState<Record<number, string>>({});
+
+  // Reset state when dialog opens/closes
+  useEffect(() => {
+    if (!open) {
+      setSelectedWarehouseId("");
+      setHierarchy(null);
+      setSelectedZoneId("");
+      setSelectedRackId("");
+      setBatchMap({});
+    }
+  }, [open]);
+
+  // Pre-fill warehouse from fgStoreId
+  useEffect(() => {
+    if (open && isFG && meta.fgStoreId) {
+      setSelectedWarehouseId(String(meta.fgStoreId));
+    }
+  }, [open, isFG, meta.fgStoreId]);
+
+  // Fetch warehouse list
+  useEffect(() => {
+    if (!open || !isFG) return;
+    get("/inventory/warehouse")
+      .then((d) => { if (d?.status) setWarehouses(d.data); })
+      .catch(() => {});
+  }, [open, isFG]);
+
+  // Fetch hierarchy when warehouse selected
+  useEffect(() => {
+    setSelectedZoneId(""); setSelectedRackId(""); setHierarchy(null);
+    if (!selectedWarehouseId) return;
+    setHierarchyLoading(true);
+    get(`/inventory/store/stock/hierarchy/${selectedWarehouseId}`)
+      .then((d) => { if (d?.status) setHierarchy(d.data); })
+      .catch(() => {})
+      .finally(() => setHierarchyLoading(false));
+  }, [selectedWarehouseId]);
+
+  // Reset rack when zone changes
+  useEffect(() => { setSelectedRackId(""); }, [selectedZoneId]);
+
+  const zones = useMemo(() => getHierarchyZones(hierarchy), [hierarchy]);
+  const racks = useMemo(() => getHierarchyRacks(hierarchy, selectedZoneId), [hierarchy, selectedZoneId]);
+
+  // Barcode is only enabled once warehouse+zone+rack are selected (for FG)
+  const barcodeReady = !isFG || (!!selectedWarehouseId && !!selectedZoneId && !!selectedRackId);
 
   const handlePrint = () => {
     if (!printRef.current) return;
@@ -187,10 +270,7 @@ const StoreIssueApprovalDialog: React.FC<StoreIssueApprovalDialogProps> = ({
 
           {/* ── Header bar ── */}
           <div className="flex items-center justify-between px-6 py-4 border-b bg-white shrink-0 relative">
-            {/* Approved stamp */}
             <ApprovedStamp />
-
-            {/* Title — offset so stamp doesn't overlap */}
             <DialogHeader className="ml-24">
               <DialogTitle className="text-base font-semibold text-gray-900">
                 Store Entry/Issue Approval &nbsp;
@@ -198,19 +278,14 @@ const StoreIssueApprovalDialog: React.FC<StoreIssueApprovalDialogProps> = ({
               </DialogTitle>
             </DialogHeader>
 
-            {/* Other Actions dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button
-                  className="bg-[#105076] hover:bg-[#0d4566] text-white text-xs font-semibold h-8 px-4 shrink-0"
-                >
+                <Button className="bg-[#105076] hover:bg-[#0d4566] text-white text-xs font-semibold h-8 px-4 shrink-0">
                   OTHER ACTIONS
                   <ChevronDown className="ml-2 h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
-
-                {/* Print */}
                 <DropdownMenuItem
                   className="flex items-center gap-2 text-sm cursor-pointer"
                   onClick={handlePrint}
@@ -219,16 +294,15 @@ const StoreIssueApprovalDialog: React.FC<StoreIssueApprovalDialogProps> = ({
                   Print
                 </DropdownMenuItem>
 
-                {/* Add Barcode Number — active for GRN and FG, disabled for everything else */}
                 <DropdownMenuItem
                   className={`flex items-center gap-2 text-sm ${
-                    canBarcode
+                    canBarcode && barcodeReady
                       ? "cursor-pointer"
                       : "opacity-40 cursor-not-allowed"
                   }`}
-                  disabled={!canBarcode}
+                  disabled={!canBarcode || !barcodeReady}
                   onSelect={(e) => {
-                    if (!canBarcode) { e.preventDefault(); return; }
+                    if (!canBarcode || !barcodeReady) { e.preventDefault(); return; }
                     setBarcodeOpen(true);
                   }}
                 >
@@ -244,7 +318,6 @@ const StoreIssueApprovalDialog: React.FC<StoreIssueApprovalDialogProps> = ({
                     </span>
                   )}
                 </DropdownMenuItem>
-
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -252,25 +325,101 @@ const StoreIssueApprovalDialog: React.FC<StoreIssueApprovalDialogProps> = ({
           {/* ── Scrollable body ── */}
           <div className="flex-1 overflow-y-auto px-6 py-5" ref={printRef}>
 
-            {/* Meta info grid — 2 columns */}
+            {/* Meta info grid */}
             <div className="grid grid-cols-2 gap-x-12 gap-y-1.5 mb-6 border-b pb-5">
-              {/* Left column */}
               <div className="space-y-1.5">
-                <MetaField label="Document Type" value={meta.documentType} />
+                <MetaField label="Document Type"   value={meta.documentType} />
                 <MetaField label="Document Action" value={meta.documentAction} />
-                <MetaField label="Created By" value={meta.createdBy} />
-                <MetaField label="Approved By" value={meta.approvedBy} />
-                <MetaField label="Comment" value={meta.comment} />
+                <MetaField label="Created By"      value={meta.createdBy} />
+                <MetaField label="Approved By"     value={meta.approvedBy} />
+                <MetaField label="Comment"         value={meta.comment} />
               </div>
-              {/* Right column */}
               <div className="space-y-1.5">
                 <MetaField label="Document Number" value={meta.documentNumber} />
-                <MetaField label="No of Items" value={meta.noOfItems} />
-                <MetaField label="Creation Date" value={meta.creationDate} />
-                <MetaField label="Approval Date" value={meta.approvalDate} />
-                <MetaField label="Reference Id" value={meta.referenceId} />
+                <MetaField label="No of Items"     value={meta.noOfItems} />
+                <MetaField label="Creation Date"   value={meta.creationDate} />
+                <MetaField label="Approval Date"   value={meta.approvalDate} />
+                <MetaField label="Reference Id"    value={meta.referenceId} />
               </div>
             </div>
+
+            {/* ── FG: Warehouse / Zone / Rack selector ── */}
+            {isFG && (
+              <div className="mb-5 p-4 rounded-lg border border-blue-100 bg-blue-50/40">
+                {/* <div className="flex items-center gap-2 mb-3">
+                  <Warehouse className="h-4 w-4 text-blue-600" />
+                  <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
+                    Select Destination Location for Barcode
+                  </span>
+                  <span className="text-[10px] text-blue-500">(required to enable barcode generation)</span>
+                </div> */}
+                <div className="grid grid-cols-3 gap-3">
+                  {/* Warehouse */}
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Warehouse <span className="text-red-500">*</span></label>
+                    <Select value={selectedWarehouseId} onValueChange={setSelectedWarehouseId}>
+                      <SelectTrigger className="h-8 text-xs w-full">
+                        <SelectValue placeholder="Select warehouse" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {warehouses.map((w) => (
+                          <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Zone */}
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Zone <span className="text-red-500">*</span></label>
+                    {hierarchyLoading ? (
+                      <div className="h-8 flex items-center gap-2 px-3 border rounded-md bg-white opacity-60 text-xs text-gray-400">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+                      </div>
+                    ) : (
+                      <Select
+                        value={selectedZoneId}
+                        onValueChange={setSelectedZoneId}
+                        disabled={!selectedWarehouseId || zones.length === 0}
+                      >
+                        <SelectTrigger className="h-8 text-xs w-full">
+                          <SelectValue placeholder={!selectedWarehouseId ? "Select warehouse first" : zones.length === 0 ? "No zones" : "Select zone"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {zones.map((z) => (
+                            <SelectItem key={z.zoneId} value={String(z.zoneId)}>{z.zoneName}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+
+                  {/* Rack */}
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Rack <span className="text-red-500">*</span></label>
+                    <Select
+                      value={selectedRackId}
+                      onValueChange={setSelectedRackId}
+                      disabled={!selectedZoneId || racks.length === 0}
+                    >
+                      <SelectTrigger className="h-8 text-xs w-full">
+                        <SelectValue placeholder={!selectedZoneId ? "Select zone first" : racks.length === 0 ? "No racks" : "Select rack"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {racks.map((r) => (
+                          <SelectItem key={r.rackId} value={String(r.rackId)}>{r.rackName}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                {!barcodeReady && (
+                  <p className="text-[11px] text-amber-600 mt-2">
+                    ⚠ Select warehouse, zone and rack to enable barcode generation.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Table */}
             {rows.length === 0 ? (
@@ -288,6 +437,7 @@ const StoreIssueApprovalDialog: React.FC<StoreIssueApprovalDialogProps> = ({
                         "DOCUMENT QUANTITY", "APPROVED QUANTITY",
                         "UNIT", "BASE QUANTITY", "BASE UNIT",
                         "CURRENT STOCK", "COMMENT",
+                        ...(isRM ? ["BATCH"] : []),
                       ].map((h) => (
                         <th
                           key={h}
@@ -300,40 +450,33 @@ const StoreIssueApprovalDialog: React.FC<StoreIssueApprovalDialogProps> = ({
                   </thead>
                   <tbody>
                     {rows.map((row, i) => (
-                      <tr
-                        key={i}
-                        className="border-t hover:bg-gray-50"
-                      >
+                      <tr key={i} className="border-t hover:bg-gray-50">
                         <td className="px-3 py-2.5 border-r text-gray-500 text-center">{row.seq}</td>
-                        <td className="px-3 py-2.5 border-r text-blue-600 font-medium whitespace-nowrap">
-                          {row.itemId}
-                        </td>
+                        <td className="px-3 py-2.5 border-r text-blue-600 font-medium whitespace-nowrap">{row.itemId}</td>
                         <td className="px-3 py-2.5 border-r whitespace-nowrap">{row.description}</td>
                         <td className="px-3 py-2.5 border-r text-gray-600">{row.productCategory || "—"}</td>
-                        <td className="px-3 py-2.5 border-r whitespace-nowrap font-medium text-gray-700">
-                          {row.action}
-                        </td>
-                        {/* From Store */}
-                        <td className="px-3 py-2.5 border-r whitespace-nowrap text-blue-700">
-                          {row.fromStore || "—"}
-                        </td>
-                        {/* To Store */}
-                        <td className="px-3 py-2.5 border-r whitespace-nowrap text-blue-700">
-                          {row.toStore || "—"}
-                        </td>
+                        <td className="px-3 py-2.5 border-r whitespace-nowrap font-medium text-gray-700">{row.action}</td>
+                        <td className="px-3 py-2.5 border-r whitespace-nowrap text-blue-700">{row.fromStore || "—"}</td>
+                        <td className="px-3 py-2.5 border-r whitespace-nowrap text-blue-700">{row.toStore || "—"}</td>
                         <td className="px-3 py-2.5 border-r text-center font-medium">{row.documentQuantity}</td>
                         <td className="px-3 py-2.5 border-r text-center font-medium">{row.approvedQuantity}</td>
                         <td className="px-3 py-2.5 border-r text-center text-blue-600 font-medium">{row.unit}</td>
                         <td className="px-3 py-2.5 border-r text-center">{row.baseQuantity}</td>
                         <td className="px-3 py-2.5 border-r text-center">{row.baseUnit}</td>
-                        <td
-                          className={`px-3 py-2.5 border-r text-center font-medium ${
-                            row.currentStock < 0 ? "text-red-600" : "text-gray-700"
-                          }`}
-                        >
+                        <td className={`px-3 py-2.5 border-r text-center font-medium ${row.currentStock < 0 ? "text-red-600" : "text-gray-700"}`}>
                           {row.currentStock.toLocaleString()}
                         </td>
-                        <td className="px-3 py-2.5 text-gray-500">{row.comment || "—"}</td>
+                        <td className="px-3 py-2.5 border-r text-gray-500">{row.comment || "—"}</td>
+                        {isRM && (
+                          <td className="px-3 py-2.5 min-w-[120px]">
+                            <Input
+                              value={batchMap[i] ?? ""}
+                              onChange={(e) => setBatchMap((p) => ({ ...p, [i]: e.target.value }))}
+                              placeholder="Batch no."
+                              className="h-7 text-xs border-gray-300"
+                            />
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -365,18 +508,17 @@ const StoreIssueApprovalDialog: React.FC<StoreIssueApprovalDialogProps> = ({
         </DialogContent>
       </Dialog>
 
-      {/* ── BarcodeDialog — rendered outside the approval dialog so z-index stacking works ── */}
+      {/* ── BarcodeDialog ── */}
       {canBarcode && (
         <BarcodeDialog
           open={barcodeOpen}
           onOpenChange={setBarcodeOpen}
           sourceType={sourceType}
-          // GRN context
           grnId={sourceType === "GRN" ? meta.grnId : undefined}
-          // FG context
           productionId={sourceType === "FG" ? meta.productionId : undefined}
-          warehouseId={sourceType === "FG" ? meta.fgStoreId : undefined}
-          // Items derived from the approval rows (quantity-changed items only)
+          warehouseId={sourceType === "FG" ? Number(selectedWarehouseId) || meta.fgStoreId : undefined}
+          zoneId={sourceType === "FG" ? Number(selectedZoneId) || undefined : undefined}
+          rackId={sourceType === "FG" ? Number(selectedRackId) || undefined : undefined}
           items={toBarcodeItems(rows, sourceType)}
           referenceLabel={processId}
         />
@@ -386,4 +528,3 @@ const StoreIssueApprovalDialog: React.FC<StoreIssueApprovalDialogProps> = ({
 };
 
 export default StoreIssueApprovalDialog;
-
