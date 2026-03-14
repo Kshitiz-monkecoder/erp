@@ -191,7 +191,7 @@ const Header = ({
 /* ================= CALENDAR ================= */
 
 const CalendarView = ({
-  selectedDate,
+  // selectedDate,
   setSelectedDate
 }: {
   selectedDate: number;

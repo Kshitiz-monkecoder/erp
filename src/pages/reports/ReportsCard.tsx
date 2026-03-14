@@ -2,11 +2,11 @@ import React, { useState } from "react";
 import { post } from "@/lib/apiService";
 import ErrorToast from "@/components/app/toasts/ErrorToast";
 
-interface DateRangePayload {
-  startDate: string | null;
-  endDate: string | null;
-  isComplete?: boolean;
-}
+// interface DateRangePayload {
+//   startDate: string | null;
+//   endDate: string | null;
+//   isComplete?: boolean;
+// }
 
 const ReportsCard: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);

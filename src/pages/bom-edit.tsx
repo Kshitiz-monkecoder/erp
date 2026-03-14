@@ -393,7 +393,6 @@ const LinkChildBOMDialog: React.FC<{
   currentChildBOM?: LinkedChildBOM | null;
   itemId?: string;
 }> = ({ open, onClose, onSave, currentChildBOM, itemId }) => {
-  const navigate = useNavigate();
   const [bomList, setBomList] = useState<APIBOMListItem[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [noBOMsFound, setNoBOMsFound] = useState(false);

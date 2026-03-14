@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { RefreshCw, Info, ChevronDown, ChevronUp } from "lucide-react";
 
 export default function InventoryBI() {
-  const [activeTab, setActiveTab] = useState("Inventory BI");
+  // const [activeTab, setActiveTab] = useState("Inventory BI");
   const [collapsed, setCollapsed] = useState(false);
 
   const sellingItems = [

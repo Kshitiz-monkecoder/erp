@@ -4,6 +4,7 @@ import ErrorToast from "@/components/app/toasts/ErrorToast";
 
 const AccountsReport: React.FC = () => {
   const [data, setData] = useState<any[]>([]);
+  console.log("Accounts Report Data:", data);
 
   useEffect(() => {
     const fetchSales = async () => {

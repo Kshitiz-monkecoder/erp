@@ -155,7 +155,7 @@ const ApprovedRejectedPOs: React.FC = () => {
 
               <Bar dataKey="value" radius={[0, 0, 0, 0]}>
 
-                {chartData.map((entry, index) => (
+                {chartData.map((__entry, index) => (
 
                   <Cell
                     key={index}

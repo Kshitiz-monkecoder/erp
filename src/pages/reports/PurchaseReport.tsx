@@ -6,24 +6,24 @@ import ApprovedRejectedPOs from "./Purchase/ApprovedRejectedPOs";
 import PendingOrdersDashboard from "./Purchase/PendingOrdersDashboard";
 
 const PurchaseReport: React.FC = () => {
-  const [selectedCard, setSelectedCard] = useState<string | null>(null);
+  // const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [overviewData, setOverviewData] = useState<any>(null);
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
+  // const [startDate, setStartDate] = useState<string>("");
+  // const [endDate, setEndDate] = useState<string>("");
 
 
-const getWeekDates = () => {
-  const start = new Date("2026-03-02"); // Monday
-  const days = [];
+// const getWeekDates = () => {
+//   const start = new Date("2026-03-02"); // Monday
+//   const days = [];
 
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    days.push(d);
-  }
+//   for (let i = 0; i < 7; i++) {
+//     const d = new Date(start);
+//     d.setDate(start.getDate() + i);
+//     days.push(d);
+//   }
 
-  return days;
-};
+//   return days;
+// };
 
 
   useEffect(() => {
